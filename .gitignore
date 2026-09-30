@@ -1,0 +1,71 @@
+# Python
+
+**pycache**/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+
+.venv/
+venv/
+env/
+ENV/
+
+# Testing
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+
+.vscode/
+.idea/
+
+# Environment variables and secrets
+
+.env
+.env.*
+!.env.example
+
+# OS files
+
+.DS_Store
+Thumbs.db
+
+# Logs
+
+*.log
+logs/
+
+# Python packaging
+
+*.egg-info/
+dist/
+build/
+
+# Local databases
+
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+
+*.tmp
+*.temp
+
+# Local ML artifacts
+
+*.h5
+*.pt
+*.pth
+*.onnx
+models/
+chroma/
+faiss_index/
+
+# Local development data
+
+data/
+tmp/
