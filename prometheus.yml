@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # TODO: point this at your sample app's /metrics endpoint once it's
+  # deployed in the kind cluster. For docker-compose-only local dev,
+  # kubernetes_sd_configs won't resolve — swap for a static_config target.
+  - job_name: "autoops-sample-app"
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+
+  - job_name: "autoops-agent-api"
+    static_configs:
+      - targets: ["host.docker.internal:8000"]

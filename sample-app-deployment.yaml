@@ -1,0 +1,34 @@
+# A deliberately simple app that AutoOps practices healing.
+# TODO: replace `image` with a small app you control that exposes
+# /metrics (Prometheus format) and has an endpoint to inject failures
+# (e.g. GET /chaos/error-rate?value=0.2) so you can test the agent loop
+# end to end without waiting for a real incident.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-app
+  namespace: autoops
+  labels:
+    app: sample-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sample-app
+  template:
+    metadata:
+      labels:
+        app: sample-app
+    spec:
+      containers:
+        - name: sample-app
+          image: kennethreitz/httpbin  # placeholder — swap for your instrumented app
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.terraform/
+*.tfstate
+*.tfstate.backup
+.DS_Store
+.idea/
+.vscode/
+grafana-data/
+prometheus-data/
