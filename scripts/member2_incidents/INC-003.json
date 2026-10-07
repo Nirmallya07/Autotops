@@ -1,0 +1,66 @@
+{
+  "incident_id": "INC-003",
+  "service": "autotops-demo",
+  "namespace": "default",
+  "failure_type": "OOMKilled",
+  "severity": "HIGH",
+  "detected_at": "2026-10-07T21:28:04Z",
+  "status": "OPEN",
+  "source": {
+    "watcher": "watcher-v0"
+  },
+  "evidence": {
+    "pod_status": {
+      "name": "autotops-demo-5dfb754947-rh8q5",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "autotops-demo",
+          "ready": false,
+          "restart_count": 1,
+          "waiting_reason": null,
+          "last_terminated_reason": "OOMKilled",
+          "last_exit_code": 137
+        }
+      ]
+    },
+    "kubernetes_events": [
+      {
+        "type": "Normal",
+        "reason": "Pulled",
+        "message": "Container image \"autotops-demo:0.2\" already present on machine and can be accessed by the pod",
+        "count": 2
+      },
+      {
+        "type": "Normal",
+        "reason": "Created",
+        "message": "Container created",
+        "count": 2
+      },
+      {
+        "type": "Normal",
+        "reason": "Started",
+        "message": "Container started",
+        "count": 2
+      },
+      {
+        "type": "Normal",
+        "reason": "Scheduled",
+        "message": "Successfully assigned default/autotops-demo-5dfb754947-rh8q5 to minikube",
+        "count": 1
+      }
+    ],
+    "metrics": {
+      "restart_count": 1
+    },
+    "logs": [
+      " * Serving Flask app 'app'",
+      " * Debug mode: off",
+      "WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.",
+      " * Running on all addresses (0.0.0.0)",
+      " * Running on http://127.0.0.1:5000",
+      " * Running on http://10.244.0.22:5000",
+      "Press CTRL+C to quit"
+    ]
+  }
+}

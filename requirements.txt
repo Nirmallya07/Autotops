@@ -1,3 +1,7 @@
 Flask
 pytest
 prometheus_client
+requests
+kubernetes
+jsonschema
+prometheus_client

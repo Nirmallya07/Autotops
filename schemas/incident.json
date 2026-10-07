@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AutoTops Incident",
+  "description": "Incident produced by the Watcher. Schema version 1.0",
+  "type": "object",
+  "required": ["incident_id", "service", "namespace", "failure_type", "severity", "detected_at", "status", "source", "evidence"],
+  "properties": {
+    "incident_id": {"type": "string"},
+    "service": {"type": "string"},
+    "namespace": {"type": "string"},
+    "failure_type": {"enum": ["CrashLoopBackOff", "HighHTTP5xxRate", "OOMKilled"]},
+    "severity": {"enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]},
+    "detected_at": {"type": "string"},
+    "status": {"enum": ["OPEN", "RESOLVED"]},
+    "source": {
+      "type": "object",
+      "required": ["watcher"],
+      "properties": {"watcher": {"type": "string"}}
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["pod_status", "kubernetes_events", "metrics", "logs"],
+      "properties": {
+        "pod_status": {"type": "object"},
+        "kubernetes_events": {"type": "array"},
+        "metrics": {"type": "object"},
+        "logs": {"type": "array"}
+      }
+    }
+  }
+}
