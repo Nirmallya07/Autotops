@@ -69,3 +69,5 @@ faiss_index/
 
 data/
 tmp/
+
+scripts/member2_incidents/INC*
