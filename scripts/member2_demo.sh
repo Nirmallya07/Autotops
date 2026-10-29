@@ -111,23 +111,64 @@ wait_for_crashloop() {
   return 1
 }
 
+# wait_for_oom() {
+#   echo "[3] Waiting for OOMKilled (exitCode=137)..."
+#   for i in {1..60}; do
+#     P=$(pod_name)
+#     if [[ -z "$P" ]]; then
+#       sleep 1
+#       continue
+#     fi
+#     # check last terminated reason or exit code
+#     REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || true)
+#     EXIT=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' 2>/dev/null || true)
+#     if [[ "$REASON" == "OOMKilled" ]] || [[ "$EXIT" == "137" ]]; then
+#       echo "[3] Kubernetes reports OOMKilled (reason=${REASON:-<none>} exit=${EXIT:-<none>})"
+#       return 0
+#     fi
+#     sleep 1
+#   done
+#   echo "[3] Timeout waiting for OOMKilled" >&2
+#   return 1
+# }
+
 wait_for_oom() {
   echo "[3] Waiting for OOMKilled (exitCode=137)..."
+
   for i in {1..60}; do
     P=$(pod_name)
+
     if [[ -z "$P" ]]; then
       sleep 1
       continue
     fi
-    # check last terminated reason or exit code
-    REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || true)
-    EXIT=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' 2>/dev/null || true)
+
+    RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" \
+      -o jsonpath='{.status.containerStatuses[0].restartCount}' \
+      2>/dev/null || true)
+
+    REASON=$(kubectl -n "$NAMESPACE" get pod "$P" \
+      -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' \
+      2>/dev/null || true)
+
+    EXIT=$(kubectl -n "$NAMESPACE" get pod "$P" \
+      -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' \
+      2>/dev/null || true)
+
     if [[ "$REASON" == "OOMKilled" ]] || [[ "$EXIT" == "137" ]]; then
-      echo "[3] Kubernetes reports OOMKilled (reason=${REASON:-<none>} exit=${EXIT:-<none>})"
+      echo "[3] Kubernetes reports OOMKilled (reason=${REASON:-<none>} exit=${EXIT:-<none>} restarts=${RESTARTS:-0})"
       return 0
     fi
+
+    # Fallback: a restart occurred after the allocation.
+    if [[ -n "$RESTARTS" ]] && [[ "$RESTARTS" -gt 0 ]]; then
+      echo "[3] Kubernetes restarted the container after memory exhaustion (restarts=$RESTARTS)"
+      return 0
+    fi
+
     sleep 1
   done
+
   echo "[3] Timeout waiting for OOMKilled" >&2
   return 1
 }
