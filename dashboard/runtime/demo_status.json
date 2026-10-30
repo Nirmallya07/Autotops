@@ -1,6 +1,6 @@
 {
-  "state": "success",
-  "demo": "crash",
-  "message": "Demo completed successfully.",
-  "updated_at": "2026-10-08 11:48:13"
+  "state": "idle",
+  "demo": "",
+  "message": "Ready",
+  "updated_at": "2026-10-30 23:11:59"
 }
