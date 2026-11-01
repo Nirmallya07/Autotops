@@ -12,35 +12,41 @@ SERVICE = os.getenv("SERVICE", "autotops-demo")
 INTERVAL = int(os.getenv("INTERVAL", "10"))
 OUT_DIR = pathlib.Path(os.getenv("INCIDENT_DIR", str(pathlib.Path.home() / "autotops" / "incidents")))
 ACTIVE_STATE = pathlib.Path(os.getenv("INCIDENT_STATE_FILE", str(OUT_DIR / ".active_incidents.json")))
+COOLDOWN = int(os.getenv("COOLDOWN", "30"))
 
 
 def _key_id(key):
-    """Stable JSON representation so deduplication survives process restarts."""
     return json.dumps(key, separators=(",", ":"), sort_keys=True)
 
 
 def load_active_incidents(path=ACTIVE_STATE):
     try:
         data = json.loads(path.read_text())
-        return set(data.get("active", []))
+        # The previous implementation stored a list with no timestamps. Those
+        # entries could remain stale forever, so discard that legacy format.
+        if not isinstance(data.get("active"), dict):
+            return {}
+        return {key: float(ts) for key, ts in data["active"].items()}
     except FileNotFoundError:
-        return set()
-    except (OSError, ValueError, AttributeError):
+        return {}
+    except (OSError, ValueError, AttributeError, TypeError):
         print(f"[WATCHER] could not read active incident state: {path}", flush=True)
-        return set()
+        return {}
 
 
 def save_active_incidents(active, path=ACTIVE_STATE):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps({"active": sorted(active)}, indent=2))
+    tmp.write_text(json.dumps({"active": active}, indent=2))
     tmp.replace(path)
 
 
 def emit(key, failure_type, severity, pod, status, metrics, active):
+    now = time.time()
     key_id = _key_id(key)
-    if key_id in active:
-        print(f"[WATCHER] existing active incident suppresses duplicate: {failure_type} pod={status.get('name')}", flush=True)
+    last_emitted = active.get(key_id)
+    if last_emitted is not None and now - last_emitted < COOLDOWN:
+        print(f"[WATCHER] duplicate suppressed ({int(COOLDOWN - (now - last_emitted))}s cooldown): {failure_type} pod={status.get('name')}", flush=True)
         return False
 
     name = pod.metadata.name
@@ -61,7 +67,7 @@ def emit(key, failure_type, severity, pod, status, metrics, active):
         print(f"[WATCHER] incident path already exists: {path}", flush=True)
         return False
 
-    active.add(key_id)
+    active[key_id] = now
     print(f"[WATCHER] INCIDENT {incident['incident_id']} {failure_type} ({severity}) -> {path}", flush=True)
     return True
 
@@ -69,11 +75,13 @@ def emit(key, failure_type, severity, pod, status, metrics, active):
 def run_once():
     pods = k8s.get_pods(NAMESPACE, SERVICE)
     if not pods:
-        print("[WATCHER] no pods found; retaining active incident state", flush=True)
+        print("[WATCHER] no pods found; retaining incident cooldown state", flush=True)
         return
 
     active = load_active_incidents()
-    detected = set()
+    now = time.time()
+    # Expire old suppression records so a later recurrence is not blocked forever.
+    active = {key: ts for key, ts in active.items() if now - ts < COOLDOWN}
 
     for pod in pods:
         status = k8s.pod_status(pod)
@@ -84,32 +92,22 @@ def run_once():
         events = k8s.get_events(NAMESPACE, status["name"])
         sev = rules.check_crashloop(status, events)
         if sev:
-            key = ("CrashLoopBackOff", pod_uid)
-            key_id = _key_id(key)
-            detected.add(key_id)
-            emit(key, "CrashLoopBackOff", sev, pod, status,
-                 {"restart_count": restarts}, active)
+            emit(("CrashLoopBackOff", pod_uid), "CrashLoopBackOff", sev,
+                 pod, status, {"restart_count": restarts}, active)
 
         sev = rules.check_oom(status)
         if sev:
             oom_times = [c.get("last_terminated_at") for c in containers
                          if c.get("last_terminated_reason") == "OOMKilled"]
-            key = ("OOMKilled", pod_uid, tuple(oom_times))
-            detected.add(_key_id(key))
-            emit(key, "OOMKilled", sev, pod, status,
-                 {"restart_count": restarts}, active)
+            emit(("OOMKilled", pod_uid, tuple(oom_times)), "OOMKilled", sev,
+                 pod, status, {"restart_count": restarts}, active)
 
-    # Service-level metric alert is evaluated once, independently of pod count.
     sev, metrics = rules.check_5xx()
     if sev:
-        key = ("HighHTTP5xxRate",)
-        detected.add(_key_id(key))
-        emit(key, "HighHTTP5xxRate", sev, pods[0], k8s.pod_status(pods[0]),
-             metrics, active)
+        emit(("HighHTTP5xxRate",), "HighHTTP5xxRate", sev,
+             pods[0], k8s.pod_status(pods[0]), metrics, active)
 
-    # Persist only currently detected failures. Once a failure is no longer
-    # observed, its key is cleared so a later recurrence can create a new incident.
-    save_active_incidents(detected)
+    save_active_incidents(active)
 
 
 if __name__ == "__main__":
