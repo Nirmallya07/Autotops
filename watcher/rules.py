@@ -8,9 +8,34 @@ REQUEST_RATE_QUERY = 'sum(rate(http_requests_total[1m]))'
 OOM_FRESHNESS_SECONDS = 120
 
 
-def check_crashloop(status):
+def check_crashloop(status, events=None, now=None):
+    """Detect the live CrashLoopBackOff state or its fresh kubelet BackOff evidence.
+
+    Kubelet's waiting reason can disappear quickly when a container restarts.
+    A fresh 'Back-off restarting failed container' event plus a nonzero restart
+    count preserves that evidence without treating ordinary restarts as a loop.
+    """
     for c in status["containers"]:
         if c["waiting_reason"] == "CrashLoopBackOff":
+            return "HIGH"
+
+    now = now or datetime.now(timezone.utc)
+    for event in events or []:
+        if event.get("reason") != "BackOff":
+            continue
+        message = (event.get("message") or "").lower()
+        if "restarting failed container" not in message:
+            continue
+        try:
+            stamp = datetime.fromisoformat(
+                event["last_timestamp"].replace("Z", "+00:00")
+            )
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            age = (now - stamp).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= age <= 120 and any(c.get("restart_count", 0) > 0 for c in status["containers"]):
             return "HIGH"
     return None
 
