@@ -54,7 +54,8 @@ def run_once():
         restarts = max([c["restart_count"] for c in containers] or [0])
         pod_uid = status.get("uid") or status.get("name")
 
-        sev = rules.check_crashloop(status)
+        events = k8s.get_events(NAMESPACE, status["name"])
+        sev = rules.check_crashloop(status, events)
         if sev:
             emit(("CrashLoopBackOff", pod_uid), "CrashLoopBackOff", sev,
                  pod, status, {"restart_count": restarts})
