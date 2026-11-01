@@ -285,12 +285,11 @@ HEADER
     exit 1
   fi
 
-  echo "[2/5] Kubernetes detecting failure..."
-  echo "      Triggering /crash on pod $P (in-cluster exec)"
-  kubectl -n "$NAMESPACE" exec --stdin --tty "$P" -- /bin/sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/crash')\" || true" >/dev/null 2>&1 || true
-  # give Kubernetes time to observe restarts
-  sleep 2
-  wait_for_crashloop
+  INITIAL_RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" \
+    -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo 0)
+  echo "[2/5] Triggering repeated controlled crashes until kubelet reports backoff..."
+  trigger_crash_once "$P"
+  wait_for_crashloop "$P" "$INITIAL_RESTARTS"
   # Gather current pod info for summary
   RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo '<none>')
   REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)
