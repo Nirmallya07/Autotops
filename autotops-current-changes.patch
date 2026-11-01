@@ -1,0 +1,1536 @@
+diff --git a/dashboard/dashboard.js b/dashboard/dashboard.js
+index e32b630..3d0f6c3 100644
+--- a/dashboard/dashboard.js
++++ b/dashboard/dashboard.js
+@@ -81,8 +81,7 @@ function render(d) {
+         running ? "RUNNING" : statusText(p);
+ 
+     document.getElementById("appDetail").textContent =
+-        p ? p.name : (c.error || "No pod found");
+-
++        p ? "Pod name : " + p.name: (c.error || "No pod found");
+ 
+     // Kubernetes status
+     document.getElementById("k8sState").textContent =
+diff --git a/dashboard/runtime/demo_status.json b/dashboard/runtime/demo_status.json
+index ffaa0a5..9de2939 100644
+--- a/dashboard/runtime/demo_status.json
++++ b/dashboard/runtime/demo_status.json
+@@ -1,6 +1,6 @@
+ {
+-  "state": "idle",
+-  "demo": "",
+-  "message": "Ready",
+-  "updated_at": "2026-10-30 23:11:59"
++  "state": "error",
++  "demo": "oom",
++  "message": "Demo exited with code 1.",
++  "updated_at": "2026-11-02 02:34:57"
+ }
+\ No newline at end of file
+diff --git a/scripts/member2_demo.sh b/scripts/member2_demo.sh
+index da34802..470e7ea 100755
+--- a/scripts/member2_demo.sh
++++ b/scripts/member2_demo.sh
+@@ -84,162 +84,348 @@ stop_pf() {
+   fi
+ }
+ 
+-pod_name() {
+-  kubectl -n "$NAMESPACE" get pods -l app="$SERVICE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
++select_ready_pod() {
++  kubectl -n "$NAMESPACE" get pods -l "app=$SERVICE" -o json |
++    "$PYTHON_BIN" -c '
++import json, sys
++data = json.load(sys.stdin)
++candidates = []
++for pod in data.get("items", []):
++    metadata = pod.get("metadata", {})
++    status = pod.get("status", {})
++    containers = status.get("containerStatuses") or []
++    if metadata.get("deletionTimestamp") or status.get("phase") != "Running":
++        continue
++    if not containers or not all(container.get("ready") for container in containers):
++        continue
++    if not all(container.get("state", {}).get("running") for container in containers):
++        continue
++    candidates.append((metadata.get("creationTimestamp", ""), pod, containers))
++if candidates:
++    _, pod, containers = max(candidates, key=lambda candidate: candidate[0])
++    metadata = pod["metadata"]
++    print("{}\t{}\t{}".format(
++        metadata["name"],
++        metadata["uid"],
++        max(container.get("restartCount", 0) for container in containers),
++    ))
++'
++}
++
++require_ready_pod() {
++  local info
++  if ! info=$(select_ready_pod); then
++    echo "ERROR: unable to inspect pods for $SERVICE in namespace $NAMESPACE" >&2
++    return 1
++  fi
++  if [[ -z "$info" ]]; then
++    echo "ERROR: application pod is unavailable (must be Running, Ready, and not terminating)" >&2
++    return 1
++  fi
++  IFS=$'\t' read -r P POD_UID BASELINE_RESTARTS <<<"$info"
++  if [[ -z "$P" || -z "$POD_UID" || ! "$BASELINE_RESTARTS" =~ ^[0-9]+$ ]]; then
++    echo "ERROR: Kubernetes returned incomplete pod identity or restart information" >&2
++    return 1
++  fi
++}
++
++trigger_timestamp() {
++  "$PYTHON_BIN" -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).isoformat())'
++}
++
++incident_snapshot() {
++  find "$INCIDENT_DIR" -maxdepth 1 -type f -name 'INC-*.json' -printf '%f\n' | sort
+ }
+ 
+ wait_for_crashloop() {
+-  echo "[3] Waiting for CrashLoopBackOff..."
+-  for i in {1..180}; do
+-    P=$(pod_name)
+-    if [[ -z "$P" ]]; then
+-      sleep 1
+-      continue
++  local pod_name="$1" pod_uid="$2" baseline="$3" allow_recovery="${4:-yes}"
++  local pod_json result
++  echo "[3] Waiting for a new CrashLoopBackOff on pod $pod_name..."
++  for _ in {1..180}; do
++    if ! pod_json=$(kubectl -n "$NAMESPACE" get pod "$pod_name" -o json); then
++      echo "[3] Original pod $pod_name is unavailable before CrashLoopBackOff was confirmed" >&2
++      return 1
+     fi
+-    # check waiting reason
+-    REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)
+-    # check recent events for BackOff
+-    EVENT_BACKOFF=$(kubectl -n "$NAMESPACE" get events --field-selector involvedObject.name="$P" -o jsonpath='{.items[*].reason}' 2>/dev/null | grep -Eo 'BackOff' || true)
+-    RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || true)
+-    if [[ "$REASON" == "CrashLoopBackOff" ]] || [[ -n "$EVENT_BACKOFF" ]] || ([[ -n "$RESTARTS" ]] && [[ "$RESTARTS" -gt 0 ]]); then
+-      echo "[3] Kubernetes reports CrashLoopBackOff (reason=${REASON:-<none>} restarts=${RESTARTS:-0})"
+-      return 0
++    if result=$(printf '%s' "$pod_json" | "$PYTHON_BIN" -c '
++import json, sys
++pod = json.load(sys.stdin)
++metadata = pod.get("metadata", {})
++status = pod.get("status", {})
++if metadata.get("uid") != sys.argv[1]:
++    print("replaced")
++    raise SystemExit
++if metadata.get("deletionTimestamp"):
++    print("terminating")
++    raise SystemExit
++containers = status.get("containerStatuses") or []
++if any(
++    (container.get("state", {}).get("waiting") or {}).get("reason") == "CrashLoopBackOff"
++    and container.get("restartCount", 0) >= int(sys.argv[2])
++    for container in containers
++):
++    container = next(
++        container for container in containers
++        if (container.get("state", {}).get("waiting") or {}).get("reason") == "CrashLoopBackOff"
++        and container.get("restartCount", 0) >= int(sys.argv[2])
++    )
++    print("confirmed\t{}".format(container.get("restartCount", 0)))
++elif (
++    status.get("phase") == "Running"
++    and containers
++    and all(container.get("ready") for container in containers)
++    and all(container.get("state", {}).get("running") for container in containers)
++    and max(container.get("restartCount", 0) for container in containers) > int(sys.argv[2])
++):
++    print("recovered")
++else:
++    print("pending")
++' "$pod_uid" "$baseline"); then
++      case "$result" in
++        confirmed*)
++          echo "[3] Confirmed CrashLoopBackOff (pod UID=$pod_uid, ${result#*$'\t'} new restarts)"
++          return 0
++          ;;
++        replaced)
++          echo "[3] Original pod UID $pod_uid was replaced before confirmation" >&2
++          return 1
++          ;;
++        terminating)
++          echo "[3] Original pod $pod_name is terminating" >&2
++          return 1
++          ;;
++        recovered)
++          if [[ "$allow_recovery" == "yes" ]]; then
++            echo "[3] Container restarted without entering CrashLoopBackOff; it is Ready for another attempt."
++            return 2
++          fi
++          ;;
++      esac
+     fi
+     sleep 1
+   done
+-  echo "[3] Timeout waiting for CrashLoopBackOff" >&2
++  echo "[3] Timeout waiting for new CrashLoopBackOff evidence on pod $pod_name" >&2
+   return 1
+ }
+ 
+-# wait_for_oom() {
+-#   echo "[3] Waiting for OOMKilled (exitCode=137)..."
+-#   for i in {1..60}; do
+-#     P=$(pod_name)
+-#     if [[ -z "$P" ]]; then
+-#       sleep 1
+-#       continue
+-#     fi
+-#     # check last terminated reason or exit code
+-#     REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || true)
+-#     EXIT=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' 2>/dev/null || true)
+-#     if [[ "$REASON" == "OOMKilled" ]] || [[ "$EXIT" == "137" ]]; then
+-#       echo "[3] Kubernetes reports OOMKilled (reason=${REASON:-<none>} exit=${EXIT:-<none>})"
+-#       return 0
+-#     fi
+-#     sleep 1
+-#   done
+-#   echo "[3] Timeout waiting for OOMKilled" >&2
+-#   return 1
+-# }
++require_same_pod_ready() {
++  local pod_name="$1" pod_uid="$2" pod_json
++  if ! pod_json=$(kubectl -n "$NAMESPACE" get pod "$pod_name" -o json); then
++    echo "ERROR: target pod $pod_name is unavailable" >&2
++    return 1
++  fi
++  if ! printf '%s' "$pod_json" | "$PYTHON_BIN" -c '
++import json, sys
++pod = json.load(sys.stdin)
++metadata = pod.get("metadata", {})
++status = pod.get("status", {})
++containers = status.get("containerStatuses") or []
++if (
++    metadata.get("uid") == sys.argv[1]
++    and not metadata.get("deletionTimestamp")
++    and status.get("phase") == "Running"
++    and containers
++    and all(container.get("ready") for container in containers)
++    and all(container.get("state", {}).get("running") for container in containers)
++):
++    raise SystemExit(0)
++raise SystemExit(1)
++' "$pod_uid"; then
++    echo "ERROR: target pod $pod_name is no longer Running and Ready with UID $pod_uid" >&2
++    return 1
++  fi
++}
+ 
+ wait_for_oom() {
+-  echo "[3] Waiting for OOMKilled (exitCode=137)..."
+-
+-  for i in {1..60}; do
+-    P=$(pod_name)
+-
+-    if [[ -z "$P" ]]; then
+-      sleep 1
+-      continue
++  local pod_name="$1" pod_uid="$2" baseline="$3" since="$4" baseline_events="$5"
++  local pod_json event_json result
++  echo "[3] Waiting for a new OOMKilled event on pod $pod_name..."
++
++  for _ in {1..120}; do
++    event_json=$(kubectl -n "$NAMESPACE" get events \
++      --field-selector "involvedObject.uid=$pod_uid" -o json)
++    if result=$(printf '%s' "$event_json" | "$PYTHON_BIN" -c '
++import datetime, json, sys
++data = json.load(sys.stdin)
++since = datetime.datetime.fromisoformat(sys.argv[1])
++baseline = json.loads(sys.argv[3])
++def timestamp(event):
++    metadata = event.get("metadata", {})
++    return (
++        event.get("lastTimestamp")
++        or event.get("eventTime")
++        or metadata.get("creationTimestamp")
++    )
++def is_new_oom(event):
++    if (event.get("involvedObject") or {}).get("uid") != sys.argv[2]:
++        return False
++    if event.get("reason") not in ("OOMKilling", "OOMKilled"):
++        return False
++    metadata = event.get("metadata", {})
++    event_uid = metadata.get("uid")
++    previous = baseline.get(event_uid)
++    value = timestamp(event)
++    count = event.get("count") or 0
++    if event_uid and previous is None:
++        return True
++    if previous is not None:
++        return count > previous.get("count", 0) or value != previous.get("timestamp")
++    if not value:
++        return False
++    when = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
++    if when.tzinfo is None:
++        when = when.replace(tzinfo=datetime.timezone.utc)
++    return when >= since
++if any(is_new_oom(event) for event in data.get("items", [])):
++    print("event")
++    raise SystemExit
++print("pending")
++' "$since" "$pod_uid" "$baseline_events"); then
++      if [[ "$result" == "event" ]]; then
++        echo "[3] Confirmed a new OOMKilled Kubernetes event for pod UID $pod_uid"
++        return 0
++      fi
+     fi
+ 
+-    RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" \
+-      -o jsonpath='{.status.containerStatuses[0].restartCount}' \
+-      2>/dev/null || true)
+-
+-    REASON=$(kubectl -n "$NAMESPACE" get pod "$P" \
+-      -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' \
+-      2>/dev/null || true)
+-
+-    EXIT=$(kubectl -n "$NAMESPACE" get pod "$P" \
+-      -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' \
+-      2>/dev/null || true)
+-
+-    if [[ "$REASON" == "OOMKilled" ]] || [[ "$EXIT" == "137" ]]; then
+-      echo "[3] Kubernetes reports OOMKilled (reason=${REASON:-<none>} exit=${EXIT:-<none>} restarts=${RESTARTS:-0})"
+-      return 0
+-    fi
+-
+-    # Fallback: a restart occurred after the allocation.
+-    if [[ -n "$RESTARTS" ]] && [[ "$RESTARTS" -gt 0 ]]; then
+-      echo "[3] Kubernetes restarted the container after memory exhaustion (restarts=$RESTARTS)"
+-      return 0
++    if pod_json=$(kubectl -n "$NAMESPACE" get pod "$pod_name" -o json); then
++      if result=$(printf '%s' "$pod_json" | "$PYTHON_BIN" -c '
++import datetime, json, sys
++pod = json.load(sys.stdin)
++metadata = pod.get("metadata", {})
++if metadata.get("uid") != sys.argv[1]:
++    print("replaced")
++    raise SystemExit
++since = datetime.datetime.fromisoformat(sys.argv[2])
++status = pod.get("status", {})
++for container in status.get("containerStatuses") or []:
++    current = container.get("state", {}).get("terminated") or {}
++    previous = container.get("lastState", {}).get("terminated") or {}
++    for terminated, is_current in ((current, True), (previous, False)):
++        if terminated.get("reason") != "OOMKilled":
++            continue
++        finished = terminated.get("finishedAt")
++        if not finished:
++            continue
++        when = datetime.datetime.fromisoformat(finished.replace("Z", "+00:00"))
++        if when.tzinfo is None:
++            when = when.replace(tzinfo=datetime.timezone.utc)
++        if when < since:
++            continue
++        if is_current or container.get("restartCount", 0) > int(sys.argv[3]):
++            print("confirmed\t{}\t{}".format(
++                container.get("restartCount", 0), terminated.get("exitCode", "")
++            ))
++            raise SystemExit
++print("pending")
++' "$pod_uid" "$since" "$baseline"); then
++        case "$result" in
++          confirmed*)
++            echo "[3] Confirmed OOMKilled (pod UID=$pod_uid, restart_count/exit_code=${result#*$'\t'})"
++            return 0
++            ;;
++          replaced)
++            echo "[3] Original pod UID $pod_uid was replaced; checking its UID-scoped events" >&2
++            ;;
++        esac
++      fi
+     fi
+-
+     sleep 1
+   done
+-
+-  echo "[3] Timeout waiting for OOMKilled" >&2
++  echo "[3] Timeout waiting for new OOMKilled evidence on pod UID $pod_uid" >&2
+   return 1
+ }
+ 
+ run_watcher_once() {
+-  echo "[4] Running watcher once (will import watcher.main.run_once)"
+-  PYDIR="$(cd "$(dirname "$0")/.." && pwd)/watcher"
+-  # Start the prom stub (top-level helper) and run the watcher pointed at it.
++  local expected="$1" pod_name="$2" pod_uid="$3" baseline="$4" since="$5"
++  local baseline_events="${6:-}"
++  local status=0
++  local pydir
++  echo "[4] Running watcher once for the confirmed $expected failure"
++  pydir="$(cd "$(dirname "$0")/.." && pwd)/watcher"
+   start_prom_stub
++  if [[ -z "$PROM_STUB_PORT" ]]; then
++    echo "ERROR: could not start the local Prometheus stub" >&2
++    return 1
++  fi
+ 
+-  "$PYTHON_BIN" - <<PY
+-import os,sys
+-sys.path.insert(0, '$PYDIR')
+-os.environ['SERVICE']='${SERVICE}'
+-os.environ['NAMESPACE']='${NAMESPACE}'
+-os.environ['INCIDENT_DIR']='${INCIDENT_DIR}'
+-# Point the Watcher at the local stub so prom queries return empty results
+-os.environ['PROM_URL']='http://127.0.0.1:${PROM_STUB_PORT}'
++  SERVICE="$SERVICE" NAMESPACE="$NAMESPACE" INCIDENT_DIR="$INCIDENT_DIR" \
++  PROM_URL="http://127.0.0.1:$PROM_STUB_PORT" WATCHER_DIR="$pydir" \
++  DEMO_FAILURE_TYPE="$expected" DEMO_POD_NAME="$pod_name" \
++  DEMO_POD_UID="$pod_uid" DEMO_BASELINE_RESTARTS="$baseline" \
++  DEMO_TRIGGERED_AT="$since" DEMO_BASELINE_EVENTS="$baseline_events" \
++  "$PYTHON_BIN" - <<'PY' || status=$?
++import json
++import os
++import sys
++
++sys.path.insert(0, os.environ["WATCHER_DIR"])
+ import main
+-main.run_once()
++
++context = {
++    "failure_type": os.environ["DEMO_FAILURE_TYPE"],
++    "pod_name": os.environ["DEMO_POD_NAME"],
++    "pod_uid": os.environ["DEMO_POD_UID"],
++    "baseline_restarts": os.environ["DEMO_BASELINE_RESTARTS"],
++    "triggered_at": os.environ["DEMO_TRIGGERED_AT"],
++    "baseline_events": json.loads(os.environ.get("DEMO_BASELINE_EVENTS") or "{}"),
++}
++if not main.run_once(demo_context=context):
++    raise SystemExit("Watcher did not confirm the requested failure")
+ PY
+ 
+   stop_prom_stub
++  return "$status"
+ }
+ 
+ validate_and_show() {
+-  PRE_EXISTING_LIST=$1
+-  # Identify the most-recent incident created by the last watcher run.
+-  # Find newest file that is not in the PRE_EXISTING_LIST
+-  echo "[6] Looking for generated incident files in $INCIDENT_DIR"
+-  newest=''
+-  for f in $(ls -1t "$INCIDENT_DIR"/INC-*.json 2>/dev/null || true); do
+-    if [[ -z "$PRE_EXISTING_LIST" || ! $(echo "$PRE_EXISTING_LIST" | grep -x "$f" ) ]]; then
+-      newest="$f"
+-      break
+-    fi
+-  done
+-  if [[ -z "$newest" ]]; then
+-    # fallback to newest overall
+-    newest=$(ls -1t "$INCIDENT_DIR"/INC-*.json 2>/dev/null | head -n1 || true)
+-  fi
+-  if [[ -z "$newest" ]]; then
+-    echo "No incident file found in $INCIDENT_DIR" >&2
+-    return 1
+-  fi
+-  echo "[6] Incident file: $newest"
+-  # Print a concise summary of the incident (no full JSON dump)
+-  "$PYTHON_BIN" - <<PY
+-import json,sys
+-inc=json.loads(open('$newest').read())
+-e=inc.get('evidence',{})
+-pod_status=e.get('pod_status',{})
+-containers=pod_status.get('containers',[])
+-ctr=containers[0] if containers else {}
+-print('    Pod:         {}'.format(pod_status.get('name','<none>')))
+-print('    Restarts:    {}'.format(ctr.get('restart_count','<none>')))
+-print('    Reason:      {}'.format(ctr.get('waiting_reason') or ctr.get('last_terminated_reason') or '<none>'))
+-if ctr.get('last_exit_code') is not None:
+-    print('    Exit code:   {}'.format(ctr.get('last_exit_code')))
+-print('    Incident ID: {}'.format(inc.get('incident_id')))
+-print('    Severity:    {}'.format(inc.get('severity')))
+-PY
+-  echo
+-  echo "[7] Validating against schema..."
+-  "$PYTHON_BIN" - <<PY
+-import json,sys
++  local previous_files="$1" expected_type="$2"
++  echo "[6] Checking for a new $expected_type incident in $INCIDENT_DIR"
++  BEFORE_INCIDENTS="$previous_files" EXPECTED_FAILURE_TYPE="$expected_type" \
++    INCIDENT_DIR="$INCIDENT_DIR" "$PYTHON_BIN" - <<'PY'
++import json
++import os
++from pathlib import Path
++
+ from jsonschema import validate
+-schema= json.loads(open('schemas/incident.json').read())
+-inc=json.loads(open('$newest').read())
+-validate(inc,schema)
+-print('    Schema:      PASSED')
++
++incident_dir = Path(os.environ["INCIDENT_DIR"])
++before = set(os.environ["BEFORE_INCIDENTS"].splitlines())
++expected = os.environ["EXPECTED_FAILURE_TYPE"]
++new_paths = sorted(
++    path for path in incident_dir.glob("INC-*.json")
++    if path.name not in before
++)
++if len(new_paths) != 1:
++    raise SystemExit(
++        f"Expected exactly one new {expected} incident, found {len(new_paths)}"
++    )
++
++path = new_paths[0]
++incident = json.loads(path.read_text())
++if incident.get("failure_type") != expected:
++    raise SystemExit(
++        f"Expected {expected}, but new incident {path.name} is "
++        f"{incident.get('failure_type')!r}"
++    )
++
++schema_path = Path("schemas/incident.json")
++validate(incident, json.loads(schema_path.read_text()))
++evidence = incident.get("evidence", {})
++pod_status = evidence.get("pod_status", {})
++containers = pod_status.get("containers") or [{}]
++container = containers[0]
++print(f"[6] Incident file: {path}")
++print(f"    Pod:         {pod_status.get('name', '<none>')}")
++print(f"    Restarts:    {container.get('restart_count', '<none>')}")
++print(
++    "    Reason:      "
++    f"{container.get('waiting_reason') or container.get('terminated_reason') or container.get('last_terminated_reason') or '<none>'}"
++)
++exit_code = container.get("terminated_exit_code", container.get("last_exit_code"))
++if exit_code is not None:
++    print(f"    Exit code:   {exit_code}")
++print(f"    Incident ID: {incident.get('incident_id')}")
++print(f"    Severity:    {incident.get('severity')}")
++print("    Schema:      PASSED")
+ PY
+ }
+ 
+@@ -260,32 +446,50 @@ HEADER
+   echo "[1] Application status"
+   kubectl -n "$NAMESPACE" get pods -l app="$SERVICE" -o wide
+ 
+-  P=$(pod_name)
+-  if [[ -z "$P" ]]; then
+-    echo "no pod found for $SERVICE" >&2
+-    exit 1
++  require_ready_pod || exit 1
++  echo "      Pod:         $P"
++  echo "      Pod UID:     $POD_UID"
++  echo "      Restarts:    $BASELINE_RESTARTS"
++  PRE_EXISTING=$(incident_snapshot)
++  TRIGGERED_AT=$(trigger_timestamp)
++
++  local_confirmed=0
++  for attempt in {1..5}; do
++    require_same_pod_ready "$P" "$POD_UID" || exit 1
++    echo "[2/5] Triggering /crash (attempt $attempt) on pod $P"
++    if kubectl -n "$NAMESPACE" exec "$P" -- python -c \
++      "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/crash')"; then
++      echo "      /crash request returned; waiting for Kubernetes confirmation."
++    else
++      trigger_status=$?
++      echo "      /crash exec ended with status $trigger_status; checking Kubernetes evidence."
++    fi
++    if wait_for_crashloop "$P" "$POD_UID" "$BASELINE_RESTARTS"; then
++      local_confirmed=1
++      break
++    else
++      wait_status=$?
++      if [[ "$wait_status" -ne 2 ]]; then
++        exit 1
++      fi
++    fi
++  done
++  if [[ "$local_confirmed" -ne 1 ]]; then
++    echo "[3] Waiting for Kubernetes to report back-off after repeated failures..."
++    if wait_for_crashloop "$P" "$POD_UID" "$BASELINE_RESTARTS" "no"; then
++      local_confirmed=1
++    else
++      echo "ERROR: repeated /crash requests did not produce CrashLoopBackOff" >&2
++      exit 1
++    fi
+   fi
+ 
+-  echo "[2/5] Kubernetes detecting failure..."
+-  echo "      Triggering /crash on pod $P (in-cluster exec)"
+-  kubectl -n "$NAMESPACE" exec --stdin --tty "$P" -- /bin/sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/crash')\" || true" >/dev/null 2>&1 || true
+-  # give Kubernetes time to observe restarts
+-  sleep 2
+-  wait_for_crashloop
+-  # Gather current pod info for summary
+-  RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo '<none>')
+-  REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)
+-  echo "      Status:      ${REASON:-CrashLoopBackOff}"
+-  echo "      Restarts:    ${RESTARTS}"
+-
+   echo "[3/5] Member 2 Watcher analyzing Kubernetes state..."
+-  # snapshot preexisting incidents so we can identify the new one created now
+-  PRE_EXISTING=$(ls -1 "$INCIDENT_DIR"/INC-*.json 2>/dev/null || true)
+-  run_watcher_once
++  run_watcher_once "CrashLoopBackOff" "$P" "$POD_UID" \
++    "$BASELINE_RESTARTS" "$TRIGGERED_AT"
+ 
+   echo "[4/5] Incident created"
+-  # Print concise incident summary and validate only the incident created by this run
+-  validate_and_show "$PRE_EXISTING"
++  validate_and_show "$PRE_EXISTING" "CrashLoopBackOff"
+ 
+   echo "[5/5] Validating incident schema..."
+   echo
+@@ -309,37 +513,57 @@ HEADER
+   echo "      Application: $SERVICE"
+   echo "      Memory limit: 256Mi"
+ 
+-  echo "[1] Recovering application (rollout restart)"
+-  kubectl -n "$NAMESPACE" rollout restart deployment/$SERVICE
+-  echo "Waiting for pod ready..."
+-  kubectl -n "$NAMESPACE" wait --for=condition=ready pod -l app=$SERVICE --timeout=120s
+-
+-  P=$(pod_name)
+-  if [[ -z "$P" ]]; then
+-    echo "no pod found for $SERVICE" >&2
+-    exit 1
+-  fi
++  require_ready_pod || exit 1
++  echo "      Pod:         $P"
++  echo "      Pod UID:     $POD_UID"
++  echo "      Restarts:    $BASELINE_RESTARTS"
++  BASELINE_OOM_EVENTS=$(kubectl -n "$NAMESPACE" get events \
++    --field-selector "involvedObject.uid=$POD_UID" -o json |
++    "$PYTHON_BIN" -c '
++import json, sys
++data = json.load(sys.stdin)
++result = {}
++for event in data.get("items", []):
++    if event.get("reason") not in ("OOMKilling", "OOMKilled"):
++        continue
++    metadata = event.get("metadata", {})
++    timestamp = (
++        event.get("lastTimestamp")
++        or event.get("eventTime")
++        or metadata.get("creationTimestamp")
++    )
++    result[metadata["uid"]] = {
++        "count": event.get("count") or 0,
++        "timestamp": timestamp,
++    }
++print(json.dumps(result, separators=(",", ":")))
++')
++  PRE_EXISTING=$(incident_snapshot)
++  TRIGGERED_AT=$(trigger_timestamp)
+ 
+   ALLOC_MB=${ALLOC_MB:-600}
++  if [[ ! "$ALLOC_MB" =~ ^[1-9][0-9]*$ ]] || (( ALLOC_MB > 1024 )); then
++    echo "ERROR: ALLOC_MB must be an integer between 1 and 1024" >&2
++    exit 2
++  fi
+   echo "[2/5] Kubernetes detecting failure..."
+   echo "      Triggering /alloc?mb=${ALLOC_MB} on pod $P (in-cluster exec)"
+-  kubectl -n "$NAMESPACE" exec --stdin --tty "$P" -- /bin/sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/alloc?mb=${ALLOC_MB}')\" || true" >/dev/null 2>&1 || true
+-  # give Kubernetes a moment to record termination
+-  sleep 2
+-  wait_for_oom
+-  RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo '<none>')
+-  REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || true)
+-  EXIT=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' 2>/dev/null || true)
+-  echo "      Status:      ${REASON:-OOMKilled}"
+-  echo "      Exit code:   ${EXIT:-<none>}"
+-  echo "      Restarts:    ${RESTARTS}"
++  if kubectl -n "$NAMESPACE" exec "$P" -- python -c \
++    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/alloc?mb=$ALLOC_MB')"; then
++    echo "      /alloc request returned; waiting for Kubernetes confirmation."
++  else
++    trigger_status=$?
++    echo "      /alloc exec ended with status $trigger_status; checking Kubernetes evidence."
++  fi
++  wait_for_oom "$P" "$POD_UID" "$BASELINE_RESTARTS" "$TRIGGERED_AT" \
++    "$BASELINE_OOM_EVENTS" || exit 1
+ 
+   echo "[3/5] Member 2 Watcher analyzing Kubernetes state..."
+-  PRE_EXISTING=$(ls -1 "$INCIDENT_DIR"/INC-*.json 2>/dev/null || true)
+-  run_watcher_once
++  run_watcher_once "OOMKilled" "$P" "$POD_UID" \
++    "$BASELINE_RESTARTS" "$TRIGGERED_AT" "$BASELINE_OOM_EVENTS"
+ 
+   echo "[4/5] Incident created"
+-  validate_and_show "$PRE_EXISTING"
++  validate_and_show "$PRE_EXISTING" "OOMKilled"
+ 
+   echo "[5/5] Validating incident schema..."
+   echo
+diff --git a/scripts/start_dashboard.sh b/scripts/start_dashboard.sh
+index 9f9666a..70485c1 100755
+--- a/scripts/start_dashboard.sh
++++ b/scripts/start_dashboard.sh
+@@ -2,7 +2,17 @@
+ set -euo pipefail
+ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ cd "$ROOT"
+-if [[ -x "$ROOT/.venv/bin/python" ]]; then PYTHON_BIN="$ROOT/.venv/bin/python"; elif [[ -x "$ROOT/venv/bin/python" ]]; then PYTHON_BIN="$ROOT/venv/bin/python"; else PYTHON_BIN="$(command -v python3 || command -v python)"; fi
++
++if [[ -x "$ROOT/.venv/bin/python" ]]; 
++    then PYTHON_BIN="$ROOT/.venv/bin/python"; 
++
++elif [[ -x "$ROOT/venv/bin/python" ]]; 
++    then PYTHON_BIN="$ROOT/venv/bin/python";
++
++else PYTHON_BIN="$(command -v python3 || command -v python)"; 
++
++fi
++
+ echo "Starting AutoTops Operations Dashboard..."
+ echo "Open: http://127.0.0.1:8000"
+ exec "$PYTHON_BIN" dashboard/server.py
+diff --git a/tests/test_watcher.py b/tests/test_watcher.py
+index 6eb57d2..a44e96d 100644
+--- a/tests/test_watcher.py
++++ b/tests/test_watcher.py
+@@ -1,5 +1,7 @@
+-import sys
++import json
+ import pathlib
++import sys
++from types import SimpleNamespace
+ 
+ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "watcher"))
+ 
+@@ -7,6 +9,7 @@ import pytest
+ from jsonschema import ValidationError
+ 
+ import rules
++import main
+ from incident import create_incident
+ 
+ 
+@@ -19,8 +22,12 @@ def pod(waiting=None, last_reason=None, exit_code=None, restarts=0):
+             "ready": waiting is None,
+             "restart_count": restarts,
+             "waiting_reason": waiting,
++            "terminated_reason": None,
++            "terminated_exit_code": None,
++            "terminated_finished_at": None,
+             "last_terminated_reason": last_reason,
+             "last_exit_code": exit_code,
++            "last_terminated_finished_at": None,
+         }],
+     }
+ 
+@@ -40,14 +47,228 @@ def test_oom_detected_by_reason():
+     assert rules.check_oom(pod(last_reason="OOMKilled", exit_code=137)) == "HIGH"
+ 
+ 
+-def test_oom_detected_by_exit_code():
+-    assert rules.check_oom(pod(last_reason=None, exit_code=137)) == "HIGH"
++def test_oom_not_detected_by_exit_code_alone():
++    assert rules.check_oom(pod(last_reason=None, exit_code=137)) is None
+ 
+ 
+ def test_oom_not_detected_for_normal_crash():
+     assert rules.check_oom(pod(last_reason="Error", exit_code=1)) is None
+ 
+ 
++def test_crashloop_requires_exact_waiting_reason():
++    assert rules.check_crashloop(pod(waiting="CrashLoopBackOff", restarts=2), 2) == "HIGH"
++    assert rules.check_crashloop(pod(waiting=None, restarts=3), 2) is None
++
++
++def test_oom_demo_ignores_historical_oom_state():
++    status = pod(last_reason="OOMKilled", exit_code=137, restarts=1)
++    status["containers"][0]["last_terminated_finished_at"] = "2026-11-01T10:00:00+00:00"
++    assert rules.check_oom(
++        status,
++        baseline_restarts=1,
++        since="2026-11-02T10:00:00+00:00",
++    ) is None
++
++
++def test_oom_demo_accepts_new_oom_status():
++    status = pod(last_reason="OOMKilled", exit_code=137, restarts=2)
++    status["containers"][0]["last_terminated_finished_at"] = "2026-11-02T10:01:00+00:00"
++    assert rules.check_oom(
++        status,
++        baseline_restarts=1,
++        since="2026-11-02T10:00:00+00:00",
++    ) == "HIGH"
++
++
++def test_oom_demo_accepts_new_uid_scoped_event_without_pod_status():
++    event = {
++        "reason": "OOMKilling",
++        "involved_object_uid": "pod-uid",
++        "last_timestamp": "2026-11-02T10:01:00+00:00",
++    }
++    assert rules.check_oom(
++        {"containers": []},
++        events=[event],
++        baseline_restarts=0,
++        since="2026-11-02T10:00:00+00:00",
++        pod_uid="pod-uid",
++    ) == "HIGH"
++
++
++def test_oom_demo_ignores_event_for_another_pod():
++    event = {
++        "reason": "OOMKilling",
++        "involved_object_uid": "old-pod-uid",
++        "last_timestamp": "2026-11-02T10:01:00+00:00",
++    }
++    assert rules.check_oom(
++        {"containers": []},
++        events=[event],
++        baseline_restarts=0,
++        since="2026-11-02T10:00:00+00:00",
++        pod_uid="target-pod-uid",
++    ) is None
++
++
++def test_oom_demo_ignores_unchanged_historical_event():
++    event = {
++        "uid": "event-uid",
++        "reason": "OOMKilling",
++        "involved_object_uid": "pod-uid",
++        "count": 2,
++        "last_timestamp": "2026-11-02T10:01:00+00:00",
++    }
++    assert rules.check_oom(
++        {"containers": []},
++        events=[event],
++        baseline_restarts=1,
++        since="2026-11-02T10:00:00+00:00",
++        pod_uid="pod-uid",
++        baseline_events={
++            "event-uid": {
++                "count": 2,
++                "timestamp": "2026-11-02T10:01:00+00:00",
++            },
++        },
++    ) is None
++
++
++def test_oom_demo_accepts_updated_historical_event():
++    event = {
++        "uid": "event-uid",
++        "reason": "OOMKilling",
++        "involved_object_uid": "pod-uid",
++        "count": 3,
++        "last_timestamp": "2026-11-02T10:01:00+00:00",
++    }
++    assert rules.check_oom(
++        {"containers": []},
++        events=[event],
++        baseline_restarts=1,
++        since="2026-11-02T10:00:00+00:00",
++        pod_uid="pod-uid",
++        baseline_events={
++            "event-uid": {
++                "count": 2,
++                "timestamp": "2026-11-02T10:01:00+00:00",
++            },
++        },
++    ) == "HIGH"
++
++
++def test_demo_watcher_does_not_report_previous_failure(monkeypatch, tmp_path):
++    incident_dir = tmp_path / "incidents"
++    monkeypatch.setattr(main, "OUT_DIR", incident_dir)
++    old_pod = SimpleNamespace(
++        metadata=SimpleNamespace(name="autotops-test", uid="pod-uid")
++    )
++    monkeypatch.setattr(main.k8s, "get_pods", lambda *_: [old_pod])
++    monkeypatch.setattr(
++        main.k8s,
++        "pod_status",
++        lambda _: pod(last_reason="OOMKilled", exit_code=137, restarts=1),
++    )
++    monkeypatch.setattr(main.k8s, "get_events_for_uid", lambda *_: [])
++
++    created = main.run_once({
++        "failure_type": "CrashLoopBackOff",
++        "pod_name": "autotops-test",
++        "pod_uid": "pod-uid",
++        "baseline_restarts": 1,
++        "triggered_at": "2026-11-02T10:00:00+00:00",
++    })
++
++    assert created is False
++    assert list(incident_dir.glob("INC-*.json")) == []
++
++
++def test_demo_watcher_deduplicates_same_confirmed_failure(monkeypatch, tmp_path):
++    incident_dir = tmp_path / "incidents"
++    monkeypatch.setattr(main, "OUT_DIR", incident_dir)
++    monkeypatch.setattr(main.k8s, "get_logs", lambda *_: [])
++    pod_object = SimpleNamespace(
++        metadata=SimpleNamespace(name="autotops-test", uid="pod-uid")
++    )
++    monkeypatch.setattr(main.k8s, "get_pods", lambda *_: [pod_object])
++    monkeypatch.setattr(
++        main.k8s,
++        "pod_status",
++        lambda _: {
++            "name": "autotops-test",
++            "uid": "pod-uid",
++            "phase": "Running",
++            "deletion_timestamp": None,
++            "containers": [{
++                "name": "autotops-demo",
++                "ready": False,
++                "restart_count": 1,
++                "waiting_reason": "CrashLoopBackOff",
++                "terminated_reason": None,
++                "terminated_exit_code": None,
++                "terminated_finished_at": None,
++                "last_terminated_reason": "Error",
++                "last_exit_code": 1,
++                "last_terminated_finished_at": None,
++            }],
++        },
++    )
++    monkeypatch.setattr(main.k8s, "get_events_for_uid", lambda *_: [])
++    monkeypatch.setattr(main, "reported", {})
++    context = {
++        "failure_type": "CrashLoopBackOff",
++        "pod_name": "autotops-test",
++        "pod_uid": "pod-uid",
++        "baseline_restarts": 0,
++        "triggered_at": "2026-11-02T10:00:00+00:00",
++    }
++
++    assert main.run_once(context) is True
++    monkeypatch.setattr(main, "reported", {})
++    assert main.run_once(context) is False
++    assert len(list(incident_dir.glob("INC-*.json"))) == 1
++
++
++def test_demo_watcher_uses_original_pod_event_after_pod_replacement(
++    monkeypatch, tmp_path
++):
++    incident_dir = tmp_path / "incidents"
++    monkeypatch.setattr(main, "OUT_DIR", incident_dir)
++    monkeypatch.setattr(main, "reported", {})
++    replacement = SimpleNamespace(
++        metadata=SimpleNamespace(name="autotops-demo-replacement", uid="new-uid")
++    )
++    event = {
++        "uid": "oom-event-uid",
++        "involved_object_uid": "original-uid",
++        "involved_object_name": "autotops-demo-original",
++        "reason": "OOMKilling",
++        "message": "Container exceeded memory limit",
++        "count": 1,
++        "event_time": "2026-11-02T10:01:00+00:00",
++        "first_timestamp": "2026-11-02T10:01:00+00:00",
++        "last_timestamp": "2026-11-02T10:01:00+00:00",
++        "creation_timestamp": "2026-11-02T10:01:00+00:00",
++        "type": "Warning",
++    }
++    monkeypatch.setattr(main.k8s, "get_pods", lambda *_: [replacement])
++    monkeypatch.setattr(main.k8s, "get_events_for_uid", lambda *_: [event])
++    context = {
++        "failure_type": "OOMKilled",
++        "pod_name": "autotops-demo-original",
++        "pod_uid": "original-uid",
++        "baseline_restarts": 2,
++        "triggered_at": "2026-11-02T10:00:00+00:00",
++        "baseline_events": {},
++    }
++
++    assert main.run_once(context) is True
++    incident = json.loads(next(incident_dir.glob("INC-*.json")).read_text())
++    assert incident["evidence"]["pod_status"]["uid"] == "original-uid"
++    assert incident["evidence"]["pod_status"]["containers"][0]["restart_count"] == 2
++    assert incident["evidence"]["kubernetes_events"] == [event]
++    assert "Original pod is unavailable" in incident["evidence"]["logs"][0]
++
++
+ def test_5xx_detected(monkeypatch):
+     values = iter([40.0, 2.0])
+     monkeypatch.setattr(rules.prom, "query", lambda q: next(values))
+diff --git a/watcher/collectors/k8s.py b/watcher/collectors/k8s.py
+index aeb10d9..8c454a9 100644
+--- a/watcher/collectors/k8s.py
++++ b/watcher/collectors/k8s.py
+@@ -17,35 +17,77 @@ def pod_status(pod):
+     containers = []
+     for cs in (pod.status.container_statuses or []):
+         waiting = cs.state.waiting if cs.state else None
++        terminated = cs.state.terminated if cs.state else None
+         last = cs.last_state.terminated if cs.last_state else None
+         containers.append({
+             "name": cs.name,
+             "ready": cs.ready,
+             "restart_count": cs.restart_count,
+             "waiting_reason": waiting.reason if waiting else None,
++            "terminated_reason": terminated.reason if terminated else None,
++            "terminated_exit_code": terminated.exit_code if terminated else None,
++            "terminated_finished_at": (
++                terminated.finished_at.isoformat()
++                if terminated and terminated.finished_at else None
++            ),
+             "last_terminated_reason": last.reason if last else None,
+             "last_exit_code": last.exit_code if last else None,
++            "last_terminated_finished_at": (
++                last.finished_at.isoformat() if last and last.finished_at else None
++            ),
+         })
+     return {
+         "name": pod.metadata.name,
++        "uid": pod.metadata.uid,
+         "phase": pod.status.phase,
++        "deletion_timestamp": (
++            pod.metadata.deletion_timestamp.isoformat()
++            if pod.metadata.deletion_timestamp else None
++        ),
+         "containers": containers,
+     }
+ 
+ 
++def _event_evidence(event):
++    def iso(value):
++        return value.isoformat() if value else None
++
++    return {
++        "uid": event.metadata.uid,
++        "involved_object_uid": event.involved_object.uid,
++        "involved_object_name": event.involved_object.name,
++        "type": event.type,
++        "reason": event.reason,
++        "message": event.message,
++        "count": event.count,
++        "event_time": iso(event.event_time),
++        "first_timestamp": iso(event.first_timestamp),
++        "last_timestamp": iso(event.last_timestamp),
++        "creation_timestamp": iso(event.metadata.creation_timestamp),
++    }
++
++
++def _event_time(event):
++    return event.last_timestamp or event.event_time or event.metadata.creation_timestamp
++
++
++def _sorted_events(events, limit):
++    events.sort(key=_event_time, reverse=True)
++    return [_event_evidence(event) for event in events[:limit]]
++
++
+ def get_events(namespace, pod_name, limit=10):
+     events = v1.list_namespaced_event(
+         namespace, field_selector=f"involvedObject.name={pod_name}"
+     ).items
++    return _sorted_events(events, limit)
+ 
+-    def when(e):
+-        return e.last_timestamp or e.event_time or e.metadata.creation_timestamp
+ 
+-    events.sort(key=when, reverse=True)
+-    return [
+-        {"type": e.type, "reason": e.reason, "message": e.message, "count": e.count}
+-        for e in events[:limit]
+-    ]
++def get_events_for_uid(namespace, pod_uid, limit=10):
++    events = v1.list_namespaced_event(
++        namespace, field_selector=f"involvedObject.uid={pod_uid}"
++    ).items
++    return _sorted_events(events, limit)
+ 
+ 
+ ANSI = re.compile(r"\x1b\[[0-9;]*m")
+diff --git a/watcher/incident.py b/watcher/incident.py
+index 65d9b12..6b39f60 100644
+--- a/watcher/incident.py
++++ b/watcher/incident.py
+@@ -11,8 +11,14 @@ WATCHER_VERSION = "watcher-v0"
+ 
+ def next_incident_id(out_dir):
+     out_dir = pathlib.Path(out_dir)
+-    out_dir.mkdir(exist_ok=True)
+-    return f"INC-{len(list(out_dir.glob('INC-*.json'))) + 1:03d}"
++    out_dir.mkdir(parents=True, exist_ok=True)
++    numbers = []
++    for path in out_dir.glob("INC-*.json"):
++        try:
++            numbers.append(int(path.stem.removeprefix("INC-")))
++        except ValueError:
++            continue
++    return f"INC-{max(numbers, default=0) + 1:03d}"
+ 
+ 
+ def create_incident(incident_id, service, namespace, failure_type, severity, evidence):
+diff --git a/watcher/main.py b/watcher/main.py
+index 8f2ea90..1b466e2 100644
+--- a/watcher/main.py
++++ b/watcher/main.py
+@@ -2,6 +2,7 @@ import json
+ import os
+ import pathlib
+ import time
++from types import SimpleNamespace
+ 
+ import rules
+ from collectors import k8s
+@@ -10,61 +11,318 @@ from incident import create_incident, next_incident_id
+ NAMESPACE = os.getenv("NAMESPACE", "default")
+ SERVICE = os.getenv("SERVICE", "autotops-demo")
+ INTERVAL = int(os.getenv("INTERVAL", "10"))
+-OUT_DIR = pathlib.Path(os.getenv("INCIDENT_DIR", str(pathlib.Path.home() / "autotops" / "incidents")))
++
++OUT_DIR = pathlib.Path(
++    os.getenv(
++        "INCIDENT_DIR",
++        str(pathlib.Path.home() / "autotops" / "incidents")
++    )
++)
+ 
+ reported = {}
+ COOLDOWN = int(os.getenv("COOLDOWN", "300"))
+ 
+ 
+-def emit(key, failure_type, severity, pod, status, metrics):
++def _failure_already_reported(failure_id):
++    if not failure_id:
++        return False
++    for path in OUT_DIR.glob("INC-*.json"):
++        try:
++            incident = json.loads(path.read_text())
++        except (OSError, json.JSONDecodeError):
++            continue
++        if incident.get("evidence", {}).get("metrics", {}).get("failure_id") == failure_id:
++            return True
++    return False
++
++
++def emit(
++    key,
++    failure_type,
++    severity,
++    pod,
++    status,
++    metrics,
++    kubernetes_events=None,
++    logs=None,
++):
+     now = time.time()
++
+     if key in reported and now - reported[key] < COOLDOWN:
+-        return
+-    reported[key] = now
++        return False
++
+     name = pod.metadata.name
++
++    failure_id = metrics.get("failure_id")
++    if _failure_already_reported(failure_id):
++        reported[key] = now
++        print(
++            f"[WATCHER] duplicate {failure_type} evidence ignored "
++            f"(pod={name}, failure_id={failure_id})",
++            flush=True,
++        )
++        return False
++
+     evidence = {
+         "pod_status": status,
+-        "kubernetes_events": k8s.get_events(NAMESPACE, name),
++        "kubernetes_events": (
++            kubernetes_events
++            if kubernetes_events is not None
++            else k8s.get_events(NAMESPACE, name)
++        ),
+         "metrics": metrics,
+-        "logs": k8s.get_logs(NAMESPACE, name),
++        "logs": logs if logs is not None else k8s.get_logs(NAMESPACE, name),
+     }
+-    incident = create_incident(next_incident_id(OUT_DIR), SERVICE, NAMESPACE,
+-                               failure_type, severity, evidence)
++
++    incident = create_incident(
++        next_incident_id(OUT_DIR),
++        SERVICE,
++        NAMESPACE,
++        failure_type,
++        severity,
++        evidence,
++    )
++
++    OUT_DIR.mkdir(parents=True, exist_ok=True)
++
+     path = OUT_DIR / f"{incident['incident_id']}.json"
+     path.write_text(json.dumps(incident, indent=2))
+-    print(f"[WATCHER] INCIDENT {incident['incident_id']} {failure_type} ({severity}) -> {path}", flush=True)
++
++    reported[key] = now
++
++    print(
++        f"[WATCHER] INCIDENT {incident['incident_id']} "
++        f"{failure_type} ({severity}) pod={name} -> {path}",
++        flush=True,
++    )
++
++    return True
++
++
++def _restart_count(status):
++    return max([c["restart_count"] for c in status["containers"]] or [0])
++
++
++def _failure_marker(failure_type, status, events, baseline_restarts=None):
++    uid = status.get("uid") or status.get("name")
++    if baseline_restarts is not None:
++        return f"{failure_type}:{uid}:after-restarts-{baseline_restarts}"
++
++    if failure_type == "OOMKilled":
++        for container in status["containers"]:
++            finished_at = (
++                container.get("terminated_finished_at")
++                or container.get("last_terminated_finished_at")
++            )
++            if finished_at:
++                return f"{failure_type}:{uid}:{finished_at}"
++        for event in events:
++            if event.get("reason") in ("OOMKilling", "OOMKilled"):
++                return (
++                    f"{failure_type}:{uid}:"
++                    f"{event.get('uid')}:{event.get('count')}:"
++                    f"{event.get('last_timestamp') or event.get('event_time')}"
++                )
++
++    return f"{failure_type}:{uid}:{_restart_count(status)}"
+ 
+ 
+-def run_once():
++def _run_demo_once(context, pods):
++    expected = context["failure_type"]
++    pod_uid = context["pod_uid"]
++    baseline = int(context["baseline_restarts"])
++    since = context["triggered_at"]
++    baseline_events = context.get("baseline_events", {})
++
++    pod = next(
++        (candidate for candidate in pods if candidate.metadata.uid == pod_uid),
++        None,
++    )
++    events = k8s.get_events_for_uid(NAMESPACE, pod_uid)
++
++    if pod is None:
++        if expected != "OOMKilled":
++            print(
++                f"[WATCHER] target pod {context['pod_name']} ({pod_uid}) "
++                "is no longer available",
++                flush=True,
++            )
++            return False
++        status = {
++            "name": context["pod_name"],
++            "uid": pod_uid,
++            "phase": "Unknown",
++            "deletion_timestamp": None,
++            "containers": [],
++        }
++        severity = rules.check_oom(
++            status,
++            events=events,
++            baseline_restarts=baseline,
++            since=since,
++            pod_uid=pod_uid,
++            baseline_events=baseline_events,
++        )
++        if not severity:
++            print(
++                f"[WATCHER] no new {expected} evidence for pod {pod_uid}",
++                flush=True,
++            )
++            return False
++        status["containers"] = [{
++            "name": "",
++            "ready": False,
++            "restart_count": baseline,
++            "waiting_reason": None,
++            "terminated_reason": None,
++            "terminated_exit_code": None,
++            "terminated_finished_at": None,
++            "last_terminated_reason": "OOMKilled",
++            "last_exit_code": None,
++            "last_terminated_finished_at": None,
++        }]
++        pod = SimpleNamespace(
++            metadata=SimpleNamespace(name=context["pod_name"], uid=pod_uid)
++        )
++        logs = ["Original pod is unavailable; logs could not be collected."]
++    else:
++        logs = k8s.get_logs(NAMESPACE, context["pod_name"])
++        status = k8s.pod_status(pod)
++        if expected == "CrashLoopBackOff":
++            severity = rules.check_crashloop(status, baseline_restarts=baseline)
++        else:
++            severity = rules.check_oom(
++                status,
++                events=events,
++                baseline_restarts=baseline,
++                since=since,
++                pod_uid=pod_uid,
++                baseline_events=baseline_events,
++            )
++        if not severity:
++            print(
++                f"[WATCHER] no new {expected} evidence for pod {pod_uid}",
++                flush=True,
++            )
++            return False
++
++    restarts = _restart_count(status)
++    failure_id = _failure_marker(expected, status, events, baseline)
++    return emit(
++        (expected, pod_uid, failure_id),
++        expected,
++        severity,
++        pod,
++        status,
++        {
++            "restart_count": restarts,
++            "baseline_restart_count": baseline,
++            "failure_id": failure_id,
++        },
++        kubernetes_events=events,
++        logs=logs,
++    )
++
++
++def run_once(demo_context=None):
+     pods = k8s.get_pods(NAMESPACE, SERVICE)
++
+     if not pods:
++        if demo_context is not None:
++            return _run_demo_once(demo_context, pods)
+         print("[WATCHER] no pods found", flush=True)
+-        return
+-    pod = pods[0]
+-    status = k8s.pod_status(pod)
+-    restarts = max([c["restart_count"] for c in status["containers"]] or [0])
+-
+-    sev = rules.check_crashloop(status)
+-    if sev:
+-        emit(("CrashLoopBackOff",), "CrashLoopBackOff", sev, pod, status, {"restart_count": restarts})
+-
+-    sev = rules.check_oom(status)
+-    if sev:
+-        emit(("OOMKilled", restarts), "OOMKilled", sev, pod, status, {"restart_count": restarts})
+-
+-    sev, metrics = rules.check_5xx()
+-    if sev:
+-        emit(("HighHTTP5xxRate",), "HighHTTP5xxRate", sev, pod, status, metrics)
++        return False
++
++    if demo_context is not None:
++        return _run_demo_once(demo_context, pods)
++
++    # Inspect every matching pod instead of only pods[0].
++    for pod in pods:
++
++        status = k8s.pod_status(pod)
++
++        pod_name = pod.metadata.name
++        pod_uid = pod.metadata.uid or pod_name
++
++        restarts = _restart_count(status)
++        events = k8s.get_events_for_uid(NAMESPACE, pod_uid)
++
++        # CrashLoopBackOff detection
++        severity = rules.check_crashloop(status)
++
++        if severity:
++            emit(
++                ("CrashLoopBackOff", pod_uid),
++                "CrashLoopBackOff",
++                severity,
++                pod,
++                status,
++                {
++                    "restart_count": restarts,
++                    "failure_id": _failure_marker(
++                        "CrashLoopBackOff", status, events
++                    ),
++                },
++                kubernetes_events=events,
++            )
++        else:
++            reported.pop(("CrashLoopBackOff", pod_uid), None)
++
++        # OOMKilled detection
++        severity = rules.check_oom(status, events=events, pod_uid=pod_uid)
++
++        if severity:
++            emit(
++                (
++                    "OOMKilled",
++                    pod_uid,
++                    _failure_marker("OOMKilled", status, events),
++                ),
++                "OOMKilled",
++                severity,
++                pod,
++                status,
++                {
++                    "restart_count": restarts,
++                    "failure_id": _failure_marker("OOMKilled", status, events),
++                },
++                kubernetes_events=events,
++            )
++
++    # HTTP 5xx detection is service-wide.
++    severity, metrics = rules.check_5xx()
++
++    if severity:
++        pod = pods[0]
++        emit(
++            ("HighHTTP5xxRate", SERVICE, NAMESPACE),
++            "HighHTTP5xxRate",
++            severity,
++            pod,
++            k8s.pod_status(pod),
++            metrics,
++        )
+     else:
+-        reported.pop(("HighHTTP5xxRate",), None)
++        reported.pop(
++            ("HighHTTP5xxRate", SERVICE, NAMESPACE),
++            None,
++        )
+ 
+ 
+ if __name__ == "__main__":
+-    OUT_DIR.mkdir(exist_ok=True)
+-    print(f"[WATCHER] started: service={SERVICE} namespace={NAMESPACE} interval={INTERVAL}s", flush=True)
++
++    OUT_DIR.mkdir(parents=True, exist_ok=True)
++
++    print(
++        f"[WATCHER] started: service={SERVICE} "
++        f"namespace={NAMESPACE} interval={INTERVAL}s",
++        flush=True,
++    )
++
+     while True:
+         try:
+             run_once()
+-        except Exception as e:
+-            print(f"[WATCHER] error: {e}", flush=True)
+-        time.sleep(INTERVAL)
++        except Exception as error:
++            print(f"[WATCHER] error: {error}", flush=True)
++
++        time.sleep(INTERVAL)
+\ No newline at end of file
+diff --git a/watcher/rules.py b/watcher/rules.py
+index 0649be9..588d401 100644
+--- a/watcher/rules.py
++++ b/watcher/rules.py
+@@ -1,3 +1,5 @@
++import datetime
++
+ from collectors import prom
+ 
+ ERRORS_5XX_THRESHOLD = 5
+@@ -5,16 +7,98 @@ ERRORS_5XX_QUERY = 'sum(increase(http_requests_total{status=~"5.."}[1m]))'
+ REQUEST_RATE_QUERY = 'sum(rate(http_requests_total[1m]))'
+ 
+ 
+-def check_crashloop(status):
++def check_crashloop(status, baseline_restarts=None):
+     for c in status["containers"]:
+-        if c["waiting_reason"] == "CrashLoopBackOff":
++        if (
++            c["waiting_reason"] == "CrashLoopBackOff"
++            and (
++                baseline_restarts is None
++                or c["restart_count"] >= baseline_restarts
++            )
++        ):
+             return "HIGH"
+     return None
+ 
+ 
+-def check_oom(status):
++def _after(value, since):
++    if not value or not since:
++        return False
++    try:
++        timestamp = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
++        start = datetime.datetime.fromisoformat(since.replace("Z", "+00:00"))
++    except (AttributeError, TypeError, ValueError):
++        return False
++    if timestamp.tzinfo is None:
++        timestamp = timestamp.replace(tzinfo=datetime.timezone.utc)
++    if start.tzinfo is None:
++        start = start.replace(tzinfo=datetime.timezone.utc)
++    return timestamp >= start
++
++
++def _fresh_oom_event(events, pod_uid=None, since=None, baseline_events=None):
++    baseline_captured = baseline_events is not None
++    baseline_events = baseline_events or {}
++    for event in events or []:
++        reason = event.get("reason")
++        if reason not in ("OOMKilling", "OOMKilled"):
++            continue
++        if pod_uid and event.get("involved_object_uid") != pod_uid:
++            continue
++        event_uid = event.get("uid")
++        previous = baseline_events.get(event_uid)
++        if baseline_captured and event_uid and previous is None:
++            return True
++        if previous is not None:
++            count = event.get("count") or 0
++            timestamp = (
++                event.get("last_timestamp")
++                or event.get("event_time")
++                or event.get("creation_timestamp")
++            )
++            if count <= previous.get("count", 0) and timestamp == previous.get("timestamp"):
++                continue
++        event_time = (
++            event.get("last_timestamp")
++            or event.get("event_time")
++            or event.get("creation_timestamp")
++        )
++        if since and not baseline_events and not _after(event_time, since):
++            continue
++        return True
++    return False
++
++
++def check_oom(
++    status,
++    events=None,
++    baseline_restarts=None,
++    since=None,
++    pod_uid=None,
++    baseline_events=None,
++):
++    event_confirmed = _fresh_oom_event(events, pod_uid, since, baseline_events)
++    if event_confirmed:
++        return "HIGH"
++
+     for c in status["containers"]:
+-        if c["last_terminated_reason"] == "OOMKilled" or c["last_exit_code"] == 137:
++        current_oom = c.get("terminated_reason") == "OOMKilled"
++        previous_oom = c.get("last_terminated_reason") == "OOMKilled"
++        fresh_current = current_oom
++        fresh_previous = previous_oom and (
++            baseline_restarts is None
++            or c["restart_count"] > baseline_restarts
++        )
++
++        if baseline_restarts is None:
++            if current_oom or previous_oom or event_confirmed:
++                return "HIGH"
++        elif (
++            fresh_current
++            or (
++                c["restart_count"] > baseline_restarts
++                and fresh_previous
++            )
++        ):
+             return "HIGH"
+     return None
+ 

@@ -1,6 +1,6 @@
 {
-  "state": "idle",
-  "demo": "",
-  "message": "Ready",
-  "updated_at": "2026-10-30 23:11:59"
+  "state": "error",
+  "demo": "oom",
+  "message": "Demo exited with code 1.",
+  "updated_at": "2026-11-02 02:34:57"
 }

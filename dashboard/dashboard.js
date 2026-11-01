@@ -81,8 +81,7 @@ function render(d) {
         running ? "RUNNING" : statusText(p);
 
     document.getElementById("appDetail").textContent =
-        p ? p.name : (c.error || "No pod found");
-
+        p ? "Pod name : " + p.name: (c.error || "No pod found");
 
     // Kubernetes status
     document.getElementById("k8sState").textContent =
