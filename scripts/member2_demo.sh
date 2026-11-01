@@ -98,6 +98,7 @@ try:
 except Exception:
     print("")
 '
+}
 
 trigger_crash_once() {
   local pod="$1"
