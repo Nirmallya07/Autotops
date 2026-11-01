@@ -37,6 +37,38 @@ def test_crashloop_detected():
 def test_crashloop_not_detected_when_healthy():
     assert rules.check_crashloop(pod()) is None
 
+def test_fresh_kubernetes_backoff_event_detected():
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    events = [{
+        "reason": "BackOff",
+        "message": "Back-off restarting failed container autotops-demo",
+        "last_timestamp": now.isoformat(),
+    }]
+    assert rules.check_crashloop(pod(restarts=2), events, now=now) == "HIGH"
+
+
+def test_stale_kubernetes_backoff_event_ignored():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    events = [{
+        "reason": "BackOff",
+        "message": "Back-off restarting failed container autotops-demo",
+        "last_timestamp": (now - timedelta(minutes=10)).isoformat(),
+    }]
+    assert rules.check_crashloop(pod(restarts=2), events, now=now) is None
+
+
+def test_unrelated_backoff_event_ignored():
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    events = [{
+        "reason": "BackOff",
+        "message": "Image pull back-off",
+        "last_timestamp": now.isoformat(),
+    }]
+    assert rules.check_crashloop(pod(restarts=2), events, now=now) is None
+
 
 def test_recent_oom_detected_by_reason():
     now = datetime.now(timezone.utc)
