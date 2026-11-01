@@ -55,7 +55,13 @@ def get_events(namespace, pod_name, limit=10):
 
     events.sort(key=when, reverse=True)
     return [
-        {"type": e.type, "reason": e.reason, "message": e.message, "count": e.count}
+        {
+            "type": e.type,
+            "reason": e.reason,
+            "message": e.message,
+            "count": e.count,
+            "last_timestamp": when(e).isoformat() if when(e) else None,
+        }
         for e in events[:limit]
     ]
 
