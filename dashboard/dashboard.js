@@ -69,6 +69,16 @@ function render(d) {
     let p = (c.pods || [])[0];
 
     let running = p && p.ready && p.phase === "Running";
+    let triggerAvailable = c.available && c.trigger_available === true;
+
+    // Keep demo controls unavailable unless Kubernetes reports a running,
+    // non-terminating application pod.
+    document.querySelectorAll("button").forEach(button => {
+        button.disabled = !triggerAvailable || d.demo?.state === "running";
+        button.title = triggerAvailable
+            ? ""
+            : "No running application pod is available to trigger an incident.";
+    });
 
 
     // Overall cluster status
@@ -113,7 +123,15 @@ function render(d) {
         (d.demo?.state || "idle").toUpperCase();
 
     document.getElementById("demoMessage").textContent =
-        d.demo?.message || "Ready for a controlled failure.";
+        d.demo?.state === "running"
+            ? (d.demo?.message || "Demo is running...")
+            : (!c.available
+                ? "Kubernetes is unavailable. Connect to the cluster before triggering an incident."
+                : (!c.trigger_available
+                    ? ((c.pods || []).length === 0
+                        ? "No pods available for this application. Start or restore the application before triggering an incident."
+                        : "No running pods available to trigger an incident. Wait for a pod to become Running, then try again.")
+                    : (d.demo?.message || "Ready for a controlled failure.")));
 
 
     // Pod badge
