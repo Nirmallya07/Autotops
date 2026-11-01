@@ -88,26 +88,51 @@ pod_name() {
   kubectl -n "$NAMESPACE" get pods -l app="$SERVICE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
 }
 
+trigger_crash_once() {
+  local pod="$1"
+  # No TTY/stdin: this is a non-interactive HTTP request inside the container.
+  kubectl -n "$NAMESPACE" exec "$pod" -- python -c \
+    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/crash')" \
+    >/dev/null 2>&1 || true
+}
+
 wait_for_crashloop() {
-  echo "[3] Waiting for CrashLoopBackOff..."
-  for i in {1..180}; do
-    P=$(pod_name)
-    if [[ -z "$P" ]]; then
-      sleep 1
-      continue
-    fi
-    # check waiting reason
-    REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)
-    # check recent events for BackOff
-    EVENT_BACKOFF=$(kubectl -n "$NAMESPACE" get events --field-selector involvedObject.name="$P" -o jsonpath='{.items[*].reason}' 2>/dev/null | grep -Eo 'BackOff' || true)
-    RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || true)
-    if [[ "$REASON" == "CrashLoopBackOff" ]]; then
-      echo "[3] Kubernetes reports CrashLoopBackOff (reason=$REASON restarts=${RESTARTS:-0})"
+  local pod="$1"
+  local initial_restarts="$2"
+  local current_restarts reason event_text
+  echo "[3] Repeatedly triggering the crash and watching Kubernetes backoff..."
+  for i in {1..90}; do
+    pod=$(pod_name)
+    if [[ -z "$pod" ]]; then sleep 1; continue; fi
+
+    reason=$(kubectl -n "$NAMESPACE" get pod "$pod" \
+      -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)
+    current_restarts=$(kubectl -n "$NAMESPACE" get pod "$pod" \
+      -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo 0)
+
+    if [[ "$reason" == "CrashLoopBackOff" ]]; then
+      echo "[3] Confirmed CrashLoopBackOff (restarts=$current_restarts)"
       return 0
     fi
+
+    # A new restart alone is not enough. Continue inducing the deterministic
+    # /crash failure until kubelet enters backoff or emits a BackOff event.
+    if [[ "$current_restarts" =~ ^[0-9]+$ ]] && (( current_restarts > initial_restarts )); then
+      event_text=$(kubectl -n "$NAMESPACE" get events \
+        --field-selector involvedObject.name="$pod" \
+        -o jsonpath='{range .items[*]}{.reason}{"|"}{.message}{"\\n"}{end}' 2>/dev/null || true)
+      if grep -q 'BackOff|.*Back-off restarting failed container' <<<"$event_text"; then
+        echo "[3] Confirmed kubelet BackOff event (restarts=$current_restarts)"
+        return 0
+      fi
+    fi
+
+    # Re-trigger after each restart. The app may be briefly unavailable while
+    # kubelet replaces the process; that is expected.
+    if (( i % 2 == 0 )); then trigger_crash_once "$pod"; fi
     sleep 1
   done
-  echo "[3] Timeout waiting for CrashLoopBackOff" >&2
+  echo "[3] Timeout: Kubernetes did not report CrashLoopBackOff/BackOff" >&2
   return 1
 }
 
