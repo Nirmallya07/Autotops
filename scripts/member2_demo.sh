@@ -121,7 +121,7 @@ wait_for_crashloop() {
       event_text=$(kubectl -n "$NAMESPACE" get events \
         --field-selector involvedObject.name="$pod" \
         -o jsonpath='{range .items[*]}{.reason}{"|"}{.message}{"\\n"}{end}' 2>/dev/null || true)
-      if grep -q 'BackOff|.*Back-off restarting failed container' <<<"$event_text"; then
+      if grep -qE 'BackOff.*Back-off restarting failed container' <<<"$event_text"; then
         echo "[3] Confirmed kubelet BackOff event (restarts=$current_restarts)"
         return 0
       fi
@@ -304,7 +304,7 @@ HEADER
 
   echo "[4/5] Incident created"
   # Print concise incident summary and validate only the incident created by this run
-  validate_and_show "$PRE_EXISTING" "OOMKilled" "CrashLoopBackOff"
+  validate_and_show "$PRE_EXISTING" "CrashLoopBackOff"
 
   echo "[5/5] Validating incident schema..."
   echo
@@ -358,7 +358,7 @@ HEADER
   run_watcher_once
 
   echo "[4/5] Incident created"
-  validate_and_show "$PRE_EXISTING"
+  validate_and_show "$PRE_EXISTING" "OOMKilled"
 
   echo "[5/5] Validating incident schema..."
   echo
