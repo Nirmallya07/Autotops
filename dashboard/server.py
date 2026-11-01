@@ -54,21 +54,41 @@ def kubectl_json(args):
 
 def cluster_status():
     pods, err = kubectl_json(["get", "pods", "-l", "app=" + SERVICE, "-o", "json"])
-    if pods is None: return {"available": False, "error": err, "pods": []}
+    if pods is None: return {"available": False, "error": err, "pods": [], "trigger_available": False}
     result = []
+    trigger_available = False
     for p in pods.get("items", []):
-        cs = (p.get("status", {}).get("containerStatuses") or [{}])[0]
+        metadata = p.get("metadata", {})
+        pod_status = p.get("status", {})
+        statuses = pod_status.get("containerStatuses") or [{}]
+        cs = statuses[0]
         waiting = cs.get("state", {}).get("waiting") or {}
         terminated = cs.get("state", {}).get("terminated") or {}
         last = cs.get("lastState", {}).get("terminated") or {}
-        result.append({"name": p.get("metadata", {}).get("name", ""), "phase": p.get("status", {}).get("phase", "Unknown"),
+        terminating = bool(metadata.get("deletionTimestamp"))
+        running_container = any(bool(item.get("state", {}).get("running")) for item in statuses)
+        eligible = (not terminating and pod_status.get("phase") == "Running" and running_container)
+        trigger_available = trigger_available or eligible
+        result.append({"name": metadata.get("name", ""), "phase": pod_status.get("phase", "Unknown"),
                        "ready": cs.get("ready", False), "restarts": cs.get("restartCount", 0),
                        "waiting_reason": waiting.get("reason", ""), "terminated_reason": terminated.get("reason", ""),
-                       "last_reason": last.get("reason", ""), "last_exit": last.get("exitCode")})
+                       "last_reason": last.get("reason", ""), "last_exit": last.get("exitCode"),
+                       "terminating": terminating, "trigger_available": eligible})
     dep, _ = kubectl_json(["get", "deployment", SERVICE, "-o", "json"])
-    return {"available": True, "pods": result,
+    return {"available": True, "pods": result, "trigger_available": trigger_available,
             "deployment": {"ready": (dep or {}).get("status", {}).get("readyReplicas", 0),
                            "desired": (dep or {}).get("spec", {}).get("replicas", 0)}}
+
+
+def demo_preflight():
+    cluster = cluster_status()
+    if not cluster.get("available"):
+        return False, "Kubernetes is unavailable. Connect to the cluster before triggering an incident."
+    if not cluster.get("pods"):
+        return False, "No pods available for this application. Start or restore the application before triggering an incident."
+    if not cluster.get("trigger_available"):
+        return False, "No running pods available to trigger an incident. Wait for a pod to become Running, then try again."
+    return True, ""
 
 def incidents():
     items = []
@@ -114,6 +134,9 @@ class Handler(BaseHTTPRequestHandler):
             kind = "crash" if path.endswith("crash") else "oom"
             if get_status().get("state") == "running":
                 return self.send_json({"ok": False, "message": "A demo is already running."}, 409)
+            allowed, message = demo_preflight()
+            if not allowed:
+                return self.send_json({"ok": False, "message": message}, 409)
             run_demo(kind); return self.send_json({"ok": True, "message": kind.upper() + " demo started."})
         self.send_error(404)
     def log_message(self, fmt, *args): return
