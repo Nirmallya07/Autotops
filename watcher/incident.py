@@ -11,8 +11,16 @@ WATCHER_VERSION = "watcher-v0"
 
 def next_incident_id(out_dir):
     out_dir = pathlib.Path(out_dir)
-    out_dir.mkdir(exist_ok=True)
-    return f"INC-{len(list(out_dir.glob('INC-*.json'))) + 1:03d}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Use the highest existing numeric ID, not the file count: deleted files
+    # must not cause an ID collision with an incident that still exists.
+    ids = []
+    for path in out_dir.glob("INC-*.json"):
+        try:
+            ids.append(int(path.stem.split("-", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return f"INC-{max(ids, default=0) + 1:03d}"
 
 
 def create_incident(incident_id, service, namespace, failure_type, severity, evidence):
