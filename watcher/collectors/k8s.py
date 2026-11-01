@@ -10,7 +10,17 @@ v1 = client.CoreV1Api()
 
 
 def get_pods(namespace, app_label):
-    return v1.list_namespaced_pod(namespace, label_selector=f"app={app_label}").items
+    pods = v1.list_namespaced_pod(
+        namespace, label_selector=f"app={app_label}"
+    ).items
+    # Ignore pods being deleted and inspect the newest active pod first.
+    pods = [p for p in pods if not p.metadata.deletion_timestamp]
+    return sorted(
+        pods,
+        key=lambda p: p.metadata.creation_timestamp.timestamp()
+        if p.metadata.creation_timestamp else 0,
+        reverse=True,
+    )
 
 
 def pod_status(pod):
@@ -25,9 +35,11 @@ def pod_status(pod):
             "waiting_reason": waiting.reason if waiting else None,
             "last_terminated_reason": last.reason if last else None,
             "last_exit_code": last.exit_code if last else None,
+            "last_terminated_at": last.finished_at.isoformat() if last and last.finished_at else None,
         })
     return {
         "name": pod.metadata.name,
+        "uid": pod.metadata.uid,
         "phase": pod.status.phase,
         "containers": containers,
     }
