@@ -1,5 +1,6 @@
 import sys
 import pathlib
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "watcher"))
 
@@ -10,7 +11,7 @@ import rules
 from incident import create_incident
 
 
-def pod(waiting=None, last_reason=None, exit_code=None, restarts=0):
+def pod(waiting=None, last_reason=None, exit_code=None, restarts=0, last_at=None):
     return {
         "name": "autotops-test",
         "phase": "Running",
@@ -21,6 +22,7 @@ def pod(waiting=None, last_reason=None, exit_code=None, restarts=0):
             "waiting_reason": waiting,
             "last_terminated_reason": last_reason,
             "last_exit_code": exit_code,
+            "last_terminated_at": last_at,
         }],
     }
 
@@ -36,12 +38,25 @@ def test_crashloop_not_detected_when_healthy():
     assert rules.check_crashloop(pod()) is None
 
 
-def test_oom_detected_by_reason():
-    assert rules.check_oom(pod(last_reason="OOMKilled", exit_code=137)) == "HIGH"
+def test_recent_oom_detected_by_reason():
+    now = datetime.now(timezone.utc)
+    finished = (now - timedelta(seconds=10)).isoformat()
+    assert rules.check_oom(pod(last_reason="OOMKilled", exit_code=137, last_at=finished), now=now) == "HIGH"
 
 
-def test_oom_detected_by_exit_code():
-    assert rules.check_oom(pod(last_reason=None, exit_code=137)) == "HIGH"
+def test_stale_oom_is_ignored():
+    now = datetime.now(timezone.utc)
+    finished = (now - timedelta(minutes=10)).isoformat()
+    assert rules.check_oom(pod(last_reason="OOMKilled", exit_code=137, last_at=finished), now=now) is None
+
+
+def test_oom_without_timestamp_is_ignored():
+    assert rules.check_oom(pod(last_reason="OOMKilled", exit_code=137)) is None
+
+
+def test_exit_code_137_without_oom_reason_is_ignored():
+    now = datetime.now(timezone.utc)
+    assert rules.check_oom(pod(last_reason=None, exit_code=137, last_at=now.isoformat()), now=now) is None
 
 
 def test_oom_not_detected_for_normal_crash():
