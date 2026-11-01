@@ -101,8 +101,8 @@ wait_for_crashloop() {
     # check recent events for BackOff
     EVENT_BACKOFF=$(kubectl -n "$NAMESPACE" get events --field-selector involvedObject.name="$P" -o jsonpath='{.items[*].reason}' 2>/dev/null | grep -Eo 'BackOff' || true)
     RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || true)
-    if [[ "$REASON" == "CrashLoopBackOff" ]] || [[ -n "$EVENT_BACKOFF" ]] || ([[ -n "$RESTARTS" ]] && [[ "$RESTARTS" -gt 0 ]]); then
-      echo "[3] Kubernetes reports CrashLoopBackOff (reason=${REASON:-<none>} restarts=${RESTARTS:-0})"
+    if [[ "$REASON" == "CrashLoopBackOff" ]]; then
+      echo "[3] Kubernetes reports CrashLoopBackOff (reason=$REASON restarts=${RESTARTS:-0})"
       return 0
     fi
     sleep 1
@@ -160,12 +160,6 @@ wait_for_oom() {
       return 0
     fi
 
-    # Fallback: a restart occurred after the allocation.
-    if [[ -n "$RESTARTS" ]] && [[ "$RESTARTS" -gt 0 ]]; then
-      echo "[3] Kubernetes restarted the container after memory exhaustion (restarts=$RESTARTS)"
-      return 0
-    fi
-
     sleep 1
   done
 
@@ -196,6 +190,7 @@ PY
 
 validate_and_show() {
   PRE_EXISTING_LIST=$1
+  EXPECTED_FAILURE=$2
   # Identify the most-recent incident created by the last watcher run.
   # Find newest file that is not in the PRE_EXISTING_LIST
   echo "[6] Looking for generated incident files in $INCIDENT_DIR"
@@ -207,10 +202,6 @@ validate_and_show() {
     fi
   done
   if [[ -z "$newest" ]]; then
-    # fallback to newest overall
-    newest=$(ls -1t "$INCIDENT_DIR"/INC-*.json 2>/dev/null | head -n1 || true)
-  fi
-  if [[ -z "$newest" ]]; then
     echo "No incident file found in $INCIDENT_DIR" >&2
     return 1
   fi
@@ -219,6 +210,9 @@ validate_and_show() {
   "$PYTHON_BIN" - <<PY
 import json,sys
 inc=json.loads(open('$newest').read())
+expected='$EXPECTED_FAILURE'
+if inc.get('failure_type') != expected:
+    raise SystemExit('Expected failure_type {}, got {}'.format(expected, inc.get('failure_type')))
 e=inc.get('evidence',{})
 pod_status=e.get('pod_status',{})
 containers=pod_status.get('containers',[])
@@ -285,7 +279,7 @@ HEADER
 
   echo "[4/5] Incident created"
   # Print concise incident summary and validate only the incident created by this run
-  validate_and_show "$PRE_EXISTING"
+  validate_and_show "$PRE_EXISTING" "OOMKilled" "CrashLoopBackOff"
 
   echo "[5/5] Validating incident schema..."
   echo
