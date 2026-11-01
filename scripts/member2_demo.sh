@@ -85,8 +85,19 @@ stop_pf() {
 }
 
 pod_name() {
-  kubectl -n "$NAMESPACE" get pods -l app="$SERVICE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
-}
+  # Select the newest pod that is not being deleted. Kubernetes does not
+  # guarantee the order of .items[0], especially during a rolling restart.
+  kubectl -n "$NAMESPACE" get pods -l app="$SERVICE" -o json 2>/dev/null |
+    "$PYTHON_BIN" -c '
+import json, sys
+try:
+    pods = json.load(sys.stdin).get("items", [])
+    pods = [p for p in pods if not p.get("metadata", {}).get("deletionTimestamp")]
+    pods.sort(key=lambda p: p.get("metadata", {}).get("creationTimestamp", ""), reverse=True)
+    print(pods[0]["metadata"]["name"] if pods else "")
+except Exception:
+    print("")
+'
 
 trigger_crash_once() {
   local pod="$1"
@@ -158,37 +169,33 @@ wait_for_crashloop() {
 # }
 
 wait_for_oom() {
-  echo "[3] Waiting for OOMKilled (exitCode=137)..."
+  # Inspect the exact pod that received /alloc. Do not re-select a pod here:
+  # a Deployment rollout can temporarily leave old and new pods together.
+  local pod="$1"
+  local restarts reason exit_code
+  echo "[3] Waiting for OOMKilled on pod $pod (exitCode=137)..."
 
   for i in {1..60}; do
-    P=$(pod_name)
-
-    if [[ -z "$P" ]]; then
-      sleep 1
-      continue
+    if ! kubectl -n "$NAMESPACE" get pod "$pod" >/dev/null 2>&1; then
+      echo "[3] Target pod $pod disappeared before OOM status could be checked" >&2
+      return 1
     fi
 
-    RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" \
-      -o jsonpath='{.status.containerStatuses[0].restartCount}' \
-      2>/dev/null || true)
+    restarts=$(kubectl -n "$NAMESPACE" get pod "$pod" \
+      -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || true)
+    reason=$(kubectl -n "$NAMESPACE" get pod "$pod" \
+      -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || true)
+    exit_code=$(kubectl -n "$NAMESPACE" get pod "$pod" \
+      -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' 2>/dev/null || true)
 
-    REASON=$(kubectl -n "$NAMESPACE" get pod "$P" \
-      -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' \
-      2>/dev/null || true)
-
-    EXIT=$(kubectl -n "$NAMESPACE" get pod "$P" \
-      -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' \
-      2>/dev/null || true)
-
-    if [[ "$REASON" == "OOMKilled" ]] || [[ "$EXIT" == "137" ]]; then
-      echo "[3] Kubernetes reports OOMKilled (reason=${REASON:-<none>} exit=${EXIT:-<none>} restarts=${RESTARTS:-0})"
+    if [[ "$reason" == "OOMKilled" ]] || [[ "$exit_code" == "137" ]]; then
+      echo "[3] Kubernetes reports OOMKilled on $pod (reason=${reason:-<none>} exit=${exit_code:-<none>} restarts=${restarts:-0})"
       return 0
     fi
-
     sleep 1
   done
 
-  echo "[3] Timeout waiting for OOMKilled" >&2
+  echo "[3] Timeout waiting for OOMKilled on pod $pod" >&2
   return 1
 }
 
@@ -344,7 +351,7 @@ HEADER
   kubectl -n "$NAMESPACE" exec --stdin --tty "$P" -- /bin/sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/alloc?mb=${ALLOC_MB}')\" || true" >/dev/null 2>&1 || true
   # give Kubernetes a moment to record termination
   sleep 2
-  wait_for_oom
+  wait_for_oom "$P"
   RESTARTS=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo '<none>')
   REASON=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || true)
   EXIT=$(kubectl -n "$NAMESPACE" get pod "$P" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}' 2>/dev/null || true)
