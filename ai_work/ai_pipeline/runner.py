@@ -30,6 +30,16 @@ from ai_work.ai_pipeline.recovery.incident_lifecycle import IncidentLifecycle\nf
 )
 
 
+def _finish(result, lifecycle):
+    if lifecycle is not None:
+        lifecycle.record_outcome(result['incident_id'], result['status'], {
+            'message': result.get('message'),
+            'health_check': result.get('health_check'),
+            'stability_check': result.get('stability_check'),
+        })
+    return result
+
+
 def process_incident(
     incident_path: str,
     diagnoser_name: str = "mock",
@@ -37,9 +47,13 @@ def process_incident(
     stability_monitor=None,
     stability_window_seconds: float = 60,
     stability_interval_seconds: float = 10,
+    lifecycle_path: str = None,
 ) -> Dict[str, Any]:
     """Diagnose an incident and recommend remediation only when appropriate."""
     incident = IncidentLoader().load(incident_path)
+    lifecycle = IncidentLifecycle(lifecycle_path) if lifecycle_path else None
+    if lifecycle is not None:
+        lifecycle.start_processing(incident['incident_id'])
     context = DiagnosticContext().build(incident)
 
     if diagnoser_name == "ollama":
@@ -67,7 +81,7 @@ def process_incident(
         stability_check = monitor.monitor(incident, initial_result=health_check)
 
         if stability_check["status"] == RECOVERED:
-            return {
+            return _finish({
                 "incident_id": incident["incident_id"],
                 "status": RECOVERED,
                 "incident": incident,
@@ -82,10 +96,10 @@ def process_incident(
                     "no remediation proposal was generated. Incident closure "
                     "remains a separate action."
                 ),
-            }
+            }, lifecycle)
 
         if stability_check["status"] == NEEDS_REVIEW:
-            return {
+            return _finish({
                 "incident_id": incident["incident_id"],
                 "status": "NEEDS_HEALTH_REVIEW",
                 "incident": incident,
@@ -98,7 +112,7 @@ def process_incident(
                     "The original pod identity could not be verified throughout "
                     "the stability window. Review the current workload."
                 ),
-            }
+            }, lifecycle)
 
         if stability_check["status"] in {UNKNOWN, "UNHEALTHY"}:
             # Surface the latest observation rather than leaving the initial
@@ -123,7 +137,7 @@ def process_incident(
             }
 
     if health_check["status"] in {POD_NOT_FOUND, IDENTITY_CHANGED}:
-        return {
+        return _finish({
             "incident_id": incident["incident_id"],
             "status": "NEEDS_HEALTH_REVIEW",
             "incident": incident,
@@ -135,7 +149,7 @@ def process_incident(
                 "The original pod could not be safely matched to the live pod. "
                 "Review the current workload before proposing remediation."
             ),
-        }
+        }, lifecycle)
 
     proposal = RemediationProposal().create(incident, diagnosis)
     result = {
@@ -159,7 +173,7 @@ def process_incident(
             "The pod became unhealthy or the stability window was interrupted. "
             "Review the approval-gated proposal before any remediation."
         )
-    return result
+    return _finish(result, lifecycle)
 
 
 def main() -> int:
@@ -189,6 +203,10 @@ def main() -> int:
         help="Seconds between health observations during recovery verification (default: 10)",
     )
     parser.add_argument(
+        "--lifecycle-dir",
+        help="Optional directory for per-incident lifecycle history JSON files",
+    )
+    parser.add_argument(
         "--output",
         help="Optional path to write the JSON result; prints to stdout when omitted",
     )
@@ -200,6 +218,8 @@ def main() -> int:
             args.diagnoser,
             stability_window_seconds=args.stability_window_seconds,
             stability_interval_seconds=args.stability_interval_seconds,
+            lifecycle_path=(str(Path(args.lifecycle_dir) / f"{Path(args.incident).stem}.json")
+                            if args.lifecycle_dir else None),
         )
         rendered = json.dumps(result, indent=2, ensure_ascii=False)
         if args.output:
