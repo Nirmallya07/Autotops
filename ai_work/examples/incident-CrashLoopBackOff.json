@@ -1,0 +1,73 @@
+{
+  "incident_id": "INC-003",
+  "service": "demo-api",
+  "namespace": "default",
+  "failure_type": "CrashLoopBackOff",
+  "severity": "HIGH",
+  "detected_at": "2026-10-04T11:31:22Z",
+  "status": "OPEN",
+  "source": {
+    "watcher": "watcher-v0"
+  },
+  "evidence": {
+    "pod_status": {
+      "name": "demo-api-5b85dd7778-7vt5d",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "demo-api",
+          "ready": false,
+          "restart_count": 9,
+          "waiting_reason": "CrashLoopBackOff",
+          "last_terminated_reason": "Error",
+          "last_exit_code": 1
+        }
+      ]
+    },
+    "kubernetes_events": [
+      {
+        "type": "Warning",
+        "reason": "BackOff",
+        "message": "Back-off restarting failed container demo-api in pod demo-api-5b85dd7778-7vt5d_default(24a80f52-fb33-4f82-b447-bb7c6012fda1)",
+        "count": 14
+      },
+      {
+        "type": "Normal",
+        "reason": "Started",
+        "message": "Started container demo-api",
+        "count": 10
+      },
+      {
+        "type": "Normal",
+        "reason": "Pulled",
+        "message": "Container image \"demo-api:v1\" already present on machine",
+        "count": 10
+      },
+      {
+        "type": "Normal",
+        "reason": "Created",
+        "message": "Created container demo-api",
+        "count": 10
+      },
+      {
+        "type": "Warning",
+        "reason": "Unhealthy",
+        "message": "Readiness probe failed: Get \"http://10.244.0.5:5000/health\": dial tcp 10.244.0.5:5000: connect: connection refused",
+        "count": 6
+      }
+    ],
+    "metrics": {
+      "restart_count": 9
+    },
+    "logs": [
+      " * Serving Flask app 'app'",
+      " * Debug mode: off",
+      "2026-10-04 11:30:12,163 INFO WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.",
+      " * Running on all addresses (0.0.0.0)",
+      " * Running on http://127.0.0.1:5000",
+      " * Running on http://10.244.0.5:5000",
+      "2026-10-04 11:30:12,244 INFO Press CTRL+C to quit",
+      "2026-10-04 11:30:44,351 CRITICAL crash requested, killing the process now"
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "AutoTops Remediation Proposal",
+    "type": "object",
+    "required": [
+        "incident_id",
+        "action",
+        "target",
+        "reason",
+        "evidence_refs",
+        "risk",
+        "approval_required",
+        "status"
+    ],
+    "properties": {
+        "incident_id": {
+            "type": "string",
+            "minLength": 1
+        },
+        "action": {
+            "type": "string",
+            "enum": [
+                "restart",
+                "scale",
+                "rollback",
+                "investigate"
+            ]
+        },
+        "target": {
+            "type": "string",
+            "minLength": 1
+        },
+        "reason": {
+            "type": "string",
+            "minLength": 1
+        },
+        "evidence_refs": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "risk": {
+            "type": "string",
+            "enum": [
+                "LOW",
+                "MEDIUM",
+                "HIGH"
+            ]
+        },
+        "approval_required": {
+            "type": "boolean",
+            "const": true
+        },
+        "status": {
+            "type": "string",
+            "enum": [
+                "PROPOSED",
+                "APPROVED",
+                "REJECTED"
+            ]
+        }
+    },
+    "additionalProperties": false
+}

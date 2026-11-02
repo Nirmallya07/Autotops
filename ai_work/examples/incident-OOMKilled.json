@@ -1,0 +1,83 @@
+{
+  "incident_id": "INC-002",
+  "service": "demo-api",
+  "namespace": "default",
+  "failure_type": "OOMKilled",
+  "severity": "HIGH",
+  "detected_at": "2026-10-04T11:27:26Z",
+  "status": "OPEN",
+  "source": {
+    "watcher": "watcher-v0"
+  },
+  "evidence": {
+    "pod_status": {
+      "name": "demo-api-5b85dd7778-7vt5d",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "demo-api",
+          "ready": false,
+          "restart_count": 7,
+          "waiting_reason": null,
+          "last_terminated_reason": "OOMKilled",
+          "last_exit_code": 137
+        }
+      ]
+    },
+    "kubernetes_events": [
+      {
+        "type": "Normal",
+        "reason": "Started",
+        "message": "Started container demo-api",
+        "count": 8
+      },
+      {
+        "type": "Normal",
+        "reason": "Pulled",
+        "message": "Container image \"demo-api:v1\" already present on machine",
+        "count": 8
+      },
+      {
+        "type": "Normal",
+        "reason": "Created",
+        "message": "Created container demo-api",
+        "count": 8
+      }
+    ],
+    "metrics": {
+      "restart_count": 7
+    },
+    "logs": [
+      "2026-10-04 11:26:13,572 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:13,576 INFO 127.0.0.1 - - [04/Oct/2026 11:26:13] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:14,183 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:14,184 INFO 127.0.0.1 - - [04/Oct/2026 11:26:14] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:14,781 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:14,782 INFO 127.0.0.1 - - [04/Oct/2026 11:26:14] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:15,380 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:15,381 INFO 127.0.0.1 - - [04/Oct/2026 11:26:15] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:16,008 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:16,010 INFO 127.0.0.1 - - [04/Oct/2026 11:26:16] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:16,599 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:16,600 INFO 127.0.0.1 - - [04/Oct/2026 11:26:16] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:17,214 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:17,219 INFO 127.0.0.1 - - [04/Oct/2026 11:26:17] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:17,804 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:17,806 INFO 127.0.0.1 - - [04/Oct/2026 11:26:17] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:18,400 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:18,402 INFO 127.0.0.1 - - [04/Oct/2026 11:26:18] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:19,001 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:19,004 INFO 127.0.0.1 - - [04/Oct/2026 11:26:19] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:19,663 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:19,664 INFO 127.0.0.1 - - [04/Oct/2026 11:26:19] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:20,288 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:20,291 INFO 127.0.0.1 - - [04/Oct/2026 11:26:20] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:27:15,968 WARNING leaked 30MB, total = 30 MB",
+      "2026-10-04 11:27:16,052 INFO 127.0.0.1 - - [04/Oct/2026 11:27:16] \"GET /leak HTTP/1.1\" 200 -",
+      "2026-10-04 11:27:17,043 WARNING leaked 30MB, total = 60 MB",
+      "2026-10-04 11:27:17,047 INFO 127.0.0.1 - - [04/Oct/2026 11:27:17] \"GET /leak HTTP/1.1\" 200 -",
+      "2026-10-04 11:27:17,656 WARNING leaked 30MB, total = 90 MB",
+      "2026-10-04 11:27:17,659 INFO 127.0.0.1 - - [04/Oct/2026 11:27:17] \"GET /leak HTTP/1.1\" 200 -"
+    ]
+  }
+}

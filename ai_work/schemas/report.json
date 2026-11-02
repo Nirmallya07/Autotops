@@ -1,0 +1,99 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "AutoTops Incident Report",
+    "type": "object",
+    "required": [
+        "incident_id",
+        "service",
+        "failure_type",
+        "root_cause",
+        "confidence",
+        "recommended_action",
+        "proposed_action",
+        "target",
+        "risk",
+        "approval_status",
+        "execution_status",
+        "recovery_status"
+    ],
+    "properties": {
+        "incident_id": {
+            "type": "string",
+            "minLength": 1
+        },
+        "service": {
+            "type": "string",
+            "minLength": 1
+        },
+        "failure_type": {
+            "type": "string",
+            "enum": [
+                "CrashLoopBackOff",
+                "HighHTTP5xxRate",
+                "OOMKilled"
+            ]
+        },
+        "root_cause": {
+            "type": "string",
+            "minLength": 1
+        },
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+        },
+        "recommended_action": {
+            "type": "string",
+            "minLength": 1
+        },
+        "proposed_action": {
+            "type": "string",
+            "enum": [
+                "restart",
+                "scale",
+                "rollback",
+                "investigate"
+            ]
+        },
+        "target": {
+            "type": "string",
+            "minLength": 1
+        },
+        "risk": {
+            "type": "string",
+            "enum": [
+                "LOW",
+                "MEDIUM",
+                "HIGH"
+            ]
+        },
+        "approval_status": {
+            "type": "string",
+            "enum": [
+                "PROPOSED",
+                "APPROVED",
+                "REJECTED"
+            ]
+        },
+        "execution_status": {
+            "type": "string",
+            "enum": [
+                "NOT_STARTED",
+                "READY_FOR_EXECUTION",
+                "SUCCESS",
+                "FAILED",
+                "UNKNOWN"
+            ]
+        },
+        "recovery_status": {
+            "type": "string",
+            "enum": [
+                "RECOVERED",
+                "NOT_RECOVERED",
+                "ESCALATED",
+                "UNKNOWN"
+            ]
+        }
+    },
+    "additionalProperties": false
+}

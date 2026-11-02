@@ -1,0 +1,66 @@
+{
+  "incident_id": "INC-001",
+  "service": "demo-api",
+  "namespace": "default",
+  "failure_type": "HighHTTP5xxRate",
+  "severity": "HIGH",
+  "detected_at": "2026-10-04T11:26:19Z",
+  "status": "OPEN",
+  "source": {
+    "watcher": "watcher-v0"
+  },
+  "evidence": {
+    "pod_status": {
+      "name": "demo-api-5b85dd7778-7vt5d",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "demo-api",
+          "ready": true,
+          "restart_count": 6,
+          "waiting_reason": null,
+          "last_terminated_reason": "Error",
+          "last_exit_code": 1
+        }
+      ]
+    },
+    "kubernetes_events": [],
+    "metrics": {
+      "http_5xx_last_minute": 30.0,
+      "request_rate_per_sec": 0.6,
+      "threshold": 5
+    },
+    "logs": [
+      "2026-10-04 11:26:11,093 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:11,094 INFO 127.0.0.1 - - [04/Oct/2026 11:26:11] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:11,756 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:11,758 INFO 127.0.0.1 - - [04/Oct/2026 11:26:11] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:12,357 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:12,361 INFO 127.0.0.1 - - [04/Oct/2026 11:26:12] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:12,967 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:12,971 INFO 127.0.0.1 - - [04/Oct/2026 11:26:12] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:13,572 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:13,576 INFO 127.0.0.1 - - [04/Oct/2026 11:26:13] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:14,183 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:14,184 INFO 127.0.0.1 - - [04/Oct/2026 11:26:14] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:14,781 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:14,782 INFO 127.0.0.1 - - [04/Oct/2026 11:26:14] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:15,380 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:15,381 INFO 127.0.0.1 - - [04/Oct/2026 11:26:15] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:16,008 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:16,010 INFO 127.0.0.1 - - [04/Oct/2026 11:26:16] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:16,599 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:16,600 INFO 127.0.0.1 - - [04/Oct/2026 11:26:16] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:17,214 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:17,219 INFO 127.0.0.1 - - [04/Oct/2026 11:26:17] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:17,804 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:17,806 INFO 127.0.0.1 - - [04/Oct/2026 11:26:17] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:18,400 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:18,402 INFO 127.0.0.1 - - [04/Oct/2026 11:26:18] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:19,001 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:19,004 INFO 127.0.0.1 - - [04/Oct/2026 11:26:19] \"GET /error HTTP/1.1\" 500 -",
+      "2026-10-04 11:26:19,663 ERROR simulated HTTP 500 error",
+      "2026-10-04 11:26:19,664 INFO 127.0.0.1 - - [04/Oct/2026 11:26:19] \"GET /error HTTP/1.1\" 500 -"
+    ]
+  }
+}
