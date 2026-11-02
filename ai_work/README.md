@@ -17,3 +17,43 @@ Ollama-backed tests require Ollama at `http://localhost:11434` with `llama3.2:3b
 
 ## Execution boundary
 The pipeline prepares and validates proposals and an approval-gated handoff. Tests simulate execution/recovery; they do not prove that real cluster changes occurred.
+
+
+## Incident lifecycle history
+
+The source incident JSON remains Watcher-owned and is not rewritten by the AI
+pipeline. To persist AI processing state separately, pass a lifecycle directory:
+
+```bash
+python -m ai_work.ai_pipeline.runner scripts/member2_incidents/INC-054.json \
+  --diagnoser mock \
+  --stability-window-seconds 20 \
+  --stability-interval-seconds 5 \
+  --lifecycle-dir scripts/member2_incidents/lifecycle
+```
+
+This creates one lifecycle JSON file per incident under the supplied directory.
+It records an append-only event history beginning with `OPEN`, followed by
+`INVESTIGATING` and the pipeline outcome (`RECOVERED`,
+`AWAITING_HUMAN_APPROVAL`, or `NEEDS_HEALTH_REVIEW`). Each event includes a
+timestamp, actor, and message; outcome events may also include health evidence.
+
+A recovered incident is not automatically resolved. Resolution is a separate
+human action and requires an actor and a note:
+
+```python
+from ai_work.ai_pipeline.recovery.incident_lifecycle import IncidentLifecycle
+
+lifecycle = IncidentLifecycle(
+    "scripts/member2_incidents/lifecycle/INC-054.json"
+)
+lifecycle.resolve(
+    "INC-054",
+    actor="operator",
+    note="Reviewed the recovery evidence and confirmed closure.",
+)
+```
+
+Only a `RECOVERED` incident can be resolved in this lifecycle version.
+`RESOLVED` is terminal. Lifecycle persistence is opt-in; omitting
+`--lifecycle-dir` preserves the runner's previous behavior.
