@@ -43,6 +43,8 @@ class OllamaDiagnoser(Diagnoser):
             "kubernetes_events": context.get("kubernetes_events", []),
             "metrics": context.get("metrics", {}),
             "logs": context.get("logs", []),
+            "current_logs": context.get("current_logs", context.get("logs", [])),
+            "previous_logs": context.get("previous_logs", []),
         }
 
         return f"""
