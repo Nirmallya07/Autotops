@@ -65,6 +65,7 @@ class OllamaDiagnoser(Diagnoser):
             "metrics": context.get("metrics", {}),
             "current_logs": unique_lines(current_logs),
             "previous_logs": unique_lines(previous_logs),
+            "log_collection": context.get("log_collection", {}),
         }
 
         return f"""
@@ -72,6 +73,7 @@ You are the diagnostic component of AutoTops.
 
 Analyze only the supplied incident evidence.
 Do not invent evidence.
+Log collection metadata describes what the watcher could retrieve; it is an observability record, not proof of an application failure.
 Do not execute commands.
 Do not claim that remediation has been executed.
 
@@ -100,7 +102,9 @@ Diagnostic reasoning rules:
 - Evidence priority: (1) explicit application error or termination messages, (2) surrounding previous-container logs, (3) current-container logs, (4) Kubernetes events and termination details, (5) metrics and generic runtime messages.
 - When an application log explicitly identifies the action that terminated the process, state that action as the evidence-supported cause. Do not replace it with the less-informative statement that the container merely exited with an error.
 - Treat startup messages, routine informational output, and generic runtime warnings as context, not causal evidence, unless the supplied evidence directly connects them to the failure.
-- Use only the supplied logs, pod status, events, and metrics. Do not infer a specific code defect, configuration error, resource shortage, or dependency failure unless the evidence supports it.
+- Use only the supplied logs, pod status, events, metrics, and collection metadata. Do not infer a specific code defect, configuration error, resource shortage, or dependency failure unless the evidence supports it.
+- Treat log_collection statuses and error messages only as collection diagnostics. Never cite a Kubernetes API error, missing previous-log stream, permission problem, or empty log response as the application root cause.
+- If a log stream has status "error" or "unavailable", explicitly account for that evidence gap when choosing confidence and the recommended next diagnostic step. Do not describe a failed log request as proof that the application produced no logs.
 - If no application log or other evidence identifies the underlying cause, explicitly say that the exact root cause cannot yet be determined; state the observed termination separately.
 - Recommend the most useful next diagnostic step. For CrashLoopBackOff, prioritize inspecting current and previous container logs and correlating them with termination details and recent events. Do not recommend increasing retry counts, changing restart policies, or restarting a pod as a substitute for identifying the cause unless the evidence specifically justifies that action.
 - Keep recommendations operational, specific, and proportional to the evidence.
