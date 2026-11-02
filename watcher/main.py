@@ -52,7 +52,7 @@ def save_active_incidents(active, path=ACTIVE_STATE):
     tmp.replace(path)
 
 
-def emit(key, failure_type, severity, pod, status, metrics, active):
+def emit(key, failure_type, severity, pod, status, metrics, active, events=None):
     now = time.time()
     key_id = _key_id(key)
     last_emitted = active.get(key_id)
@@ -63,11 +63,50 @@ def emit(key, failure_type, severity, pod, status, metrics, active):
         return False
 
     name = pod.metadata.name
+    event_collection = {"status": "collected"}
+    if events is None:
+        try:
+            events = k8s.get_events(NAMESPACE, name)
+        except Exception as error:
+            events = []
+            event_collection = {
+                "status": "error",
+                "error": {
+                    "type": type(error).__name__,
+                    "message": str(error)[:500],
+                },
+            }
+    else:
+        events = list(events)
+
+    try:
+        log_evidence = k8s.get_log_evidence(
+            NAMESPACE, name,
+            container_names=[c["name"] for c in status.get("containers", [])],
+        )
+    except Exception as error:
+        # A log API/client failure must not prevent an otherwise valid
+        # incident from being recorded.
+        log_evidence = {
+            "current_logs": [],
+            "previous_logs": [],
+            "logs": [],
+            "log_collection": {
+                "containers": {},
+                "status": "error",
+                "error": {
+                    "type": type(error).__name__,
+                    "message": str(error)[:500],
+                },
+            },
+        }
+
     evidence = {
         "pod_status": status,
-        "kubernetes_events": k8s.get_events(NAMESPACE, name),
+        "kubernetes_events": events,
+        "event_collection": event_collection,
         "metrics": metrics,
-        **k8s.get_log_evidence(\n            NAMESPACE, name,\n            container_names=[c["name"] for c in status.get("containers", [])],\n        ),
+        **log_evidence,
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     incident = create_incident(next_incident_id(OUT_DIR), SERVICE, NAMESPACE,
@@ -106,14 +145,14 @@ def run_once():
         sev = rules.check_crashloop(status, events)
         if sev:
             emit(("CrashLoopBackOff", pod_uid), "CrashLoopBackOff", sev,
-                 pod, status, {"restart_count": restarts}, active)
+                 pod, status, {"restart_count": restarts}, active, events=events)
 
         sev = rules.check_oom(status)
         if sev:
             oom_times = [c.get("last_terminated_at") for c in containers
                          if c.get("last_terminated_reason") == "OOMKilled"]
             emit(("OOMKilled", pod_uid, tuple(oom_times)), "OOMKilled", sev,
-                 pod, status, {"restart_count": restarts}, active)
+                 pod, status, {"restart_count": restarts}, active, events=events)
 
     sev, metrics = rules.check_5xx()
     if sev:
