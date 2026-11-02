@@ -190,3 +190,32 @@ def test_crashloop_keeps_configured_cooldown(monkeypatch, tmp_path):
     monkeypatch.setattr(watcher_main.time, "time", lambda: now + watcher_main.COOLDOWN - 1)
     assert not watcher_main.emit(key, "CrashLoopBackOff", "HIGH", FakePod(), status, {}, active)
     assert len(list(tmp_path.glob("INC-*.json"))) == 1
+
+
+def test_emit_preserves_incident_when_event_and_log_collection_fail(monkeypatch, tmp_path):
+    now = 2_000_000.0
+    configure_emit_test(monkeypatch, tmp_path, now)
+
+    def fail_logs(namespace, name, **kwargs):
+        raise RuntimeError("Kubernetes API unavailable")
+
+    monkeypatch.setattr(watcher_main.k8s, "get_log_evidence", fail_logs)
+    monkeypatch.setattr(
+        watcher_main.k8s, "get_events",
+        lambda namespace, name: (_ for _ in ()).throw(PermissionError("forbidden")),
+    )
+    active = {}
+    status = pod(waiting="CrashLoopBackOff", restarts=2)
+
+    assert watcher_main.emit(
+        ("CrashLoopBackOff", "pod-uid-2"),
+        "CrashLoopBackOff", "HIGH", FakePod(), status, {}, active,
+    )
+    incident = __import__("json").loads(
+        next(tmp_path.glob("INC-*.json")).read_text()
+    )
+    evidence = incident["evidence"]
+    assert evidence["event_collection"]["status"] == "error"
+    assert evidence["event_collection"]["error"]["type"] == "PermissionError"
+    assert evidence["log_collection"]["status"] == "error"
+    assert evidence["logs"] == []
