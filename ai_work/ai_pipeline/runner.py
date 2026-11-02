@@ -71,9 +71,10 @@ def process_incident(
                 "proposal": None,
                 "execution_performed": False,
                 "message": (
-                    "The same pod remained healthy throughout the stability "
-                    "window. Recovery is verified; no remediation proposal "
-                    "was generated. Incident closure remains a separate action."
+                    "All sampled observations of the same pod were healthy "
+                    "throughout the stability window. Recovery is verified; "
+                    "no remediation proposal was generated. Incident closure "
+                    "remains a separate action."
                 ),
             }
 
@@ -93,15 +94,19 @@ def process_incident(
                 ),
             }
 
-        if stability_check["status"] == UNKNOWN:
-            health_check = {
-                **health_check,
-                "status": UNKNOWN,
-                "reason": "The stability window could not be completed with conclusive observations.",
-            }
-        # If the pod became unhealthy during the window, fall through to the
-        # approval-gated proposal path using the latest stability observation.
-        elif stability_check["status"] != "UNHEALTHY":
+        if stability_check["status"] in {UNKNOWN, "UNHEALTHY"}:
+            # Surface the latest observation rather than leaving the initial
+            # healthy snapshot as the apparent current state.
+            health_check = (
+                stability_check["observations"][-1]
+                if stability_check.get("observations")
+                else {
+                    **health_check,
+                    "status": stability_check["status"],
+                    "reason": stability_check.get("reason"),
+                }
+            )
+        else:
             health_check = {
                 **health_check,
                 "status": UNKNOWN,
