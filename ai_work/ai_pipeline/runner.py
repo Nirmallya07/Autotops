@@ -65,7 +65,7 @@ def process_incident(
     else:
         raise ValueError(f"Unsupported diagnoser: {diagnoser_name}")
 
-    diagnosis = DiagnosisValidator().validate(diagnoser.diagnose(context))
+    diagnosis = DiagnosisValidator().validate(diagnoser.diagnose(context), context)
     # Preserve diagnoser metadata so reports and the dashboard identify the source.
     diagnosis["diagnoser"] = diagnoser_name
     diagnosis["model"] = ollama_model if diagnoser_name == "ollama" else None
