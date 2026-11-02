@@ -289,4 +289,4 @@ refresh();
 
 // Refresh live cluster and incident data every ten seconds.
 // Expanded AI assessments are cached and remain visible between refreshes.
-setInterval(refresh, 10000);
+setInterval(refresh, 15000);
