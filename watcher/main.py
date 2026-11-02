@@ -165,7 +165,7 @@ def run_once():
             oom_times = [c.get("last_terminated_at") for c in containers
                          if c.get("last_terminated_reason") == "OOMKilled"]
             emit(("OOMKilled", pod_uid, tuple(oom_times)), "OOMKilled", sev,
-                 pod, status, {"restart_count": restarts}, active, events=events)
+                 pod, status, {"restart_count": restarts}, active, events=events, event_error=event_error)
 
     sev, metrics = rules.check_5xx()
     if sev:
