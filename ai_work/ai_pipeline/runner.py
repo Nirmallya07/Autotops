@@ -23,7 +23,7 @@ from ai_work.ai_pipeline.recovery.health_checker import (
     UNKNOWN,
     KubernetesHealthChecker,
 )
-from ai_work.ai_pipeline.recovery.stability_monitor import (
+from ai_work.ai_pipeline.recovery.incident_lifecycle import IncidentLifecycle\nfrom ai_work.ai_pipeline.recovery.stability_monitor import (
     NEEDS_REVIEW,
     RECOVERED,
     RecoveryStabilityMonitor,
