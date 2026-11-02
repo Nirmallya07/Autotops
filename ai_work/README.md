@@ -57,3 +57,23 @@ lifecycle.resolve(
 Only a `RECOVERED` incident can be resolved in this lifecycle version.
 `RESOLVED` is terminal. Lifecycle persistence is opt-in; omitting
 `--lifecycle-dir` preserves the runner's previous behavior.
+
+
+## Using a specific local Ollama model
+
+Select the Ollama model explicitly with `--ollama-model`. The default remains
+`llama3.2:3b` for compatibility. For example, if `qwen2.5:3b` is installed
+locally:
+
+```bash
+python -m ai_work.ai_pipeline.runner scripts/member2_incidents/INC-054.json \\
+  --diagnoser ollama \\
+  --ollama-model qwen2.5:3b \\
+  --stability-window-seconds 10 \\
+  --stability-interval-seconds 5 \\
+  --output /tmp/INC-054-qwen-analysis.json
+```
+
+The model supplies the diagnosis only. Kubernetes health checks, recovery
+verification, approval requirements, and the no-automatic-execution boundary
+remain enforced by the pipeline.
