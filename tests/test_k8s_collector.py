@@ -33,11 +33,12 @@ class FakeCoreV1Api:
 
 
 def test_collects_current_and_previous_logs_for_each_container(monkeypatch):
+    newline = bytes([10])
     api = FakeCoreV1Api({
-        ("app", False): b"app current\n",
-        ("app", True): b"app previous\n",
-        ("sidecar", False): b"sidecar current\n",
-        ("sidecar", True): b"sidecar previous\n",
+        ("app", False): b"app current" + newline,
+        ("app", True): b"app previous" + newline,
+        ("sidecar", False): b"sidecar current" + newline,
+        ("sidecar", True): b"sidecar previous" + newline,
     })
     monkeypatch.setattr(k8s, "get_kubernetes_client", lambda: api)
 
@@ -57,7 +58,7 @@ def test_collects_current_and_previous_logs_for_each_container(monkeypatch):
 
 def test_log_collection_records_unavailable_previous_stream(monkeypatch):
     api = FakeCoreV1Api({
-        ("app", False): b"app started\n",
+        ("app", False): b"app started" + bytes([10]),
         ("app", True): FakeApiError(404, "previous container instance not found"),
     })
     monkeypatch.setattr(k8s, "get_kubernetes_client", lambda: api)
@@ -109,8 +110,10 @@ def test_log_collection_handles_empty_successful_stream(monkeypatch):
 
 
 def test_log_collection_strips_ansi_and_health_noise(monkeypatch):
+    newline = bytes([10])
+    escape = bytes([27])
     api = FakeCoreV1Api({
-        ("app", False): b"\x1b[31mERROR app failed\x1b[0m\nGET /health 200\n",
+        ("app", False): escape + b"[31mERROR app failed" + escape + b"[0m" + newline + b"GET /health 200" + newline,
         ("app", True): b"",
     })
     monkeypatch.setattr(k8s, "get_kubernetes_client", lambda: api)
