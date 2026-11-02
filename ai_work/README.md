@@ -89,3 +89,8 @@ recommend collecting more useful evidence, such as current and previous
 container logs. Generic runtime warnings must not be presented as the cause
 without supporting evidence. The model must not recommend arbitrary retry
 increases or restart-policy changes as a substitute for diagnosis.
+
+
+Diagnosis output includes the selected diagnoser and, for Ollama, the model
+name. The dashboard displays this metadata in each AI analysis panel so that
+local LLM use can be distinguished from deterministic mock diagnosis.
