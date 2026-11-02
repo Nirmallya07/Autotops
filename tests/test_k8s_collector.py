@@ -1,5 +1,6 @@
 import pathlib
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "watcher"))
 
@@ -123,3 +124,33 @@ def test_log_collection_strips_ansi_and_health_noise(monkeypatch):
     )
 
     assert result["current_logs"] == ["ERROR app failed"]
+
+
+def test_pod_status_includes_application_init_and_ephemeral_containers():
+    def container(name, ready=True, restarts=0):
+        return SimpleNamespace(
+            name=name,
+            ready=ready,
+            restart_count=restarts,
+            state=None,
+            last_state=None,
+        )
+
+    pod = SimpleNamespace(
+        metadata=SimpleNamespace(name="demo-pod", uid="pod-uid"),
+        status=SimpleNamespace(
+            phase="Running",
+            container_statuses=[container("app")],
+            init_container_statuses=[container("init-setup", ready=True)],
+            ephemeral_container_statuses=[container("debugger", ready=True)],
+        ),
+    )
+
+    result = k8s.pod_status(pod)
+
+    assert [item["name"] for item in result["containers"]] == [
+        "app", "init-setup", "debugger"
+    ]
+    assert [item["container_type"] for item in result["containers"]] == [
+        "application", "init", "ephemeral"
+    ]
