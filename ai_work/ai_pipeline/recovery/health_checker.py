@@ -77,6 +77,16 @@ class KubernetesHealthChecker:
                 identity_verified=False,
             )
 
+        if not previous_uid or not current_uid:
+            return self._result(
+                incident, UNKNOWN,
+                "Pod identity is missing from the incident or live snapshot; recovery cannot be verified safely.",
+                pod_name=pod_name,
+                pod_uid=current_uid,
+                phase=current.get("phase"),
+                identity_verified=False,
+            )
+
         containers = current.get("containers") or []
         if not containers:
             return self._result(
