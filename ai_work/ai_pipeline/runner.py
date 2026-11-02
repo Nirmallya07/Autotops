@@ -1,7 +1,7 @@
 """Run a normalized Watcher incident through diagnosis and proposal generation.
 
-This entry point checks the affected pod before recommending remediation. It
-stops before approval or execution; a human must review every proposal.
+The entry point checks current pod health and verifies sustained recovery before
+suppressing remediation. It stops before approval or execution.
 """
 
 import argparse
@@ -23,12 +23,18 @@ from ai_work.ai_pipeline.recovery.health_checker import (
     UNKNOWN,
     KubernetesHealthChecker,
 )
+from ai_work.ai_pipeline.recovery.stability_monitor import (
+    NEEDS_REVIEW,
+    RECOVERED,
+    RecoveryStabilityMonitor,
+)
 
 
 def process_incident(
     incident_path: str,
     diagnoser_name: str = "mock",
     health_checker=None,
+    stability_monitor=None,
 ) -> Dict[str, Any]:
     """Diagnose an incident and recommend remediation only when appropriate."""
     incident = IncidentLoader().load(incident_path)
@@ -47,20 +53,60 @@ def process_incident(
     health_check = checker.assess(incident)
 
     if health_check["status"] == HEALTHY_NOW:
-        return {
-            "incident_id": incident["incident_id"],
-            "status": "CURRENTLY_HEALTHY",
-            "incident": incident,
-            "diagnosis": diagnosis,
-            "health_check": health_check,
-            "proposal": None,
-            "execution_performed": False,
-            "message": (
-                "The affected pod is healthy at this check. No remediation "
-                "proposal was generated. Observe it over a stability window "
-                "before declaring the incident resolved."
-            ),
-        }
+        monitor = (
+            stability_monitor
+            if stability_monitor is not None
+            else RecoveryStabilityMonitor(checker)
+        )
+        stability_check = monitor.monitor(incident, initial_result=health_check)
+
+        if stability_check["status"] == RECOVERED:
+            return {
+                "incident_id": incident["incident_id"],
+                "status": RECOVERED,
+                "incident": incident,
+                "diagnosis": diagnosis,
+                "health_check": health_check,
+                "stability_check": stability_check,
+                "proposal": None,
+                "execution_performed": False,
+                "message": (
+                    "The same pod remained healthy throughout the stability "
+                    "window. Recovery is verified; no remediation proposal "
+                    "was generated. Incident closure remains a separate action."
+                ),
+            }
+
+        if stability_check["status"] == NEEDS_REVIEW:
+            return {
+                "incident_id": incident["incident_id"],
+                "status": "NEEDS_HEALTH_REVIEW",
+                "incident": incident,
+                "diagnosis": diagnosis,
+                "health_check": health_check,
+                "stability_check": stability_check,
+                "proposal": None,
+                "execution_performed": False,
+                "message": (
+                    "The original pod identity could not be verified throughout "
+                    "the stability window. Review the current workload."
+                ),
+            }
+
+        if stability_check["status"] == UNKNOWN:
+            health_check = {
+                **health_check,
+                "status": UNKNOWN,
+                "reason": "The stability window could not be completed with conclusive observations.",
+            }
+        # If the pod became unhealthy during the window, fall through to the
+        # approval-gated proposal path using the latest stability observation.
+        elif stability_check["status"] != "UNHEALTHY":
+            health_check = {
+                **health_check,
+                "status": UNKNOWN,
+                "reason": "The stability monitor returned an unrecognized result.",
+            }
 
     if health_check["status"] in {POD_NOT_FOUND, IDENTITY_CHANGED}:
         return {
@@ -77,11 +123,8 @@ def process_incident(
             ),
         }
 
-    # UNKNOWN does not mean healthy. Preserve the approval-gated proposal path,
-    # but include the failed health assessment so a reviewer sees the uncertainty.
     proposal = RemediationProposal().create(incident, diagnosis)
-
-    return {
+    result = {
         "incident_id": incident["incident_id"],
         "status": "AWAITING_HUMAN_APPROVAL",
         "incident": incident,
@@ -96,13 +139,20 @@ def process_incident(
             else "Review the proposal and obtain explicit human approval before execution."
         ),
     }
+    if "stability_check" in locals():
+        result["stability_check"] = stability_check
+        result["message"] = (
+            "The pod became unhealthy or the stability window was interrupted. "
+            "Review the approval-gated proposal before any remediation."
+        )
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Diagnose a Watcher incident, check current pod health, and "
-            "generate an approval-gated remediation proposal."
+            "Diagnose an incident, check current pod health, verify sustained "
+            "recovery, and generate an approval-gated remediation proposal."
         )
     )
     parser.add_argument("incident", help="Path to a normalized Watcher incident JSON file")
