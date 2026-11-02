@@ -8,6 +8,18 @@ ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_INCIDENT = ROOT / "examples" / "incident-CrashLoopBackOff.json"
 
 
+class FakeHealthChecker:
+    def __init__(self, status):
+        self.status = status
+
+    def assess(self, incident):
+        return {
+            "incident_id": incident["incident_id"],
+            "status": self.status,
+            "reason": "Test health assessment",
+        }
+
+
 def test_runner_builds_proposal_without_approving_or_executing():
     result = process_incident(str(SAMPLE_INCIDENT), diagnoser_name="mock")
 
@@ -18,6 +30,56 @@ def test_runner_builds_proposal_without_approving_or_executing():
     assert result["proposal"]["status"] == "PROPOSED"
     assert result["proposal"]["approval_required"] is True
     assert result["execution_performed"] is False
+    assert result["health_check"]["status"] == "UNKNOWN"
+
+
+def test_runner_skips_proposal_when_pod_is_healthy():
+    result = process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="mock",
+        health_checker=FakeHealthChecker("HEALTHY_NOW"),
+    )
+
+    assert result["status"] == "CURRENTLY_HEALTHY"
+    assert result["proposal"] is None
+    assert result["execution_performed"] is False
+
+
+def test_runner_keeps_approval_gated_proposal_when_pod_is_unhealthy():
+    result = process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="mock",
+        health_checker=FakeHealthChecker("UNHEALTHY"),
+    )
+
+    assert result["status"] == "AWAITING_HUMAN_APPROVAL"
+    assert result["proposal"]["status"] == "PROPOSED"
+    assert result["proposal"]["approval_required"] is True
+    assert result["execution_performed"] is False
+
+
+def test_runner_requires_review_when_original_pod_cannot_be_verified():
+    result = process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="mock",
+        health_checker=FakeHealthChecker("IDENTITY_CHANGED"),
+    )
+
+    assert result["status"] == "NEEDS_HEALTH_REVIEW"
+    assert result["proposal"] is None
+    assert result["execution_performed"] is False
+
+
+def test_runner_keeps_proposal_visible_when_health_is_unknown():
+    result = process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="mock",
+        health_checker=FakeHealthChecker("UNKNOWN"),
+    )
+
+    assert result["status"] == "AWAITING_HUMAN_APPROVAL"
+    assert result["proposal"]["approval_required"] is True
+    assert "inconclusive" in result["message"]
 
 
 def test_runner_rejects_unknown_diagnoser():
