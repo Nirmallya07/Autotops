@@ -81,15 +81,16 @@ def get_events(namespace, pod_name, limit=10):
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _read_log_stream(v1, namespace, pod_name, previous, lines):
+def _read_log_stream(v1, namespace, pod_name, previous, lines, container=None):
     """Read one container log stream without hiding errors from the caller."""
-    resp = v1.read_namespaced_pod_log(
-        pod_name,
-        namespace,
-        tail_lines=300,
-        previous=previous,
-        _preload_content=False,
-    )
+    options = {
+        "tail_lines": 300,
+        "previous": previous,
+        "_preload_content": False,
+    }
+    if container:
+        options["container"] = container
+    resp = v1.read_namespaced_pod_log(pod_name, namespace, **options)
     text = ANSI.sub("", resp.data.decode("utf-8", errors="replace"))
     noise = ("GET /health", "GET /metrics")
     useful = [
@@ -99,30 +100,67 @@ def _read_log_stream(v1, namespace, pod_name, previous, lines):
     return useful[-lines:]
 
 
-def get_log_evidence(namespace, pod_name, lines=30):
-    """Collect current and previous container logs as separate evidence."""
+def _log_error_details(error):
+    """Return a compact, serializable description of a Kubernetes log API error."""
+    status = getattr(error, "status", None)
+    message = str(getattr(error, "reason", "") or error).strip()
+    return {
+        "type": type(error).__name__,
+        "http_status": status,
+        "message": message[:500],
+    }
+
+
+def get_log_evidence(namespace, pod_name, lines=30, container_names=None):
+    """Collect logs per container and report the outcome of every API request.
+
+    current_logs and previous_logs remain flat string arrays for existing
+    diagnostic consumers. log_collection adds per-container observability
+    metadata without turning collection errors into application evidence.
+    """
     v1 = get_kubernetes_client()
-    result = {"current_logs": [], "previous_logs": []}
+    names = list(dict.fromkeys(
+        name for name in (container_names or []) if isinstance(name, str) and name
+    ))
+    # Preserve the old default-container behavior for callers that do not
+    # provide container names.
+    targets = names or [None]
+    result = {
+        "current_logs": [],
+        "previous_logs": [],
+        "log_collection": {"containers": {}},
+    }
 
-    for previous, key in (
-        (False, "current_logs"),
-        (True, "previous_logs"),
-    ):
-        try:
-            result[key] = _read_log_stream(
-                v1, namespace, pod_name, previous, lines
-            )
-        except Exception:
-            # A previous stream may not exist before the first restart.
-            # Keep the other stream even if one request fails.
-            result[key] = []
+    for container in targets:
+        label = container or "default"
+        details = {}
+        for previous, key in ((False, "current_logs"), (True, "previous_logs")):
+            try:
+                collected = _read_log_stream(
+                    v1, namespace, pod_name, previous, lines, container=container
+                )
+                result[key].extend(collected)
+                details["previous" if previous else "current"] = {
+                    "status": "collected" if collected else "empty",
+                    "line_count": len(collected),
+                }
+            except Exception as error:
+                error_details = _log_error_details(error)
+                # Kubernetes commonly returns 400/404 when no previous
+                # container instance exists. Record this as unavailable,
+                # not as an application failure or an API outage.
+                unavailable = previous and error_details["http_status"] in (400, 404)
+                details["previous" if previous else "current"] = {
+                    "status": "unavailable" if unavailable else "error",
+                    "error": error_details,
+                }
+        result["log_collection"]["containers"][label] = details
 
-    # Keep the original logs array for compatibility with existing consumers.
+    # Keep the original combined field for consumers using the v1 schema.
+    # An empty list accurately means no log lines were collected; unlike a
+    # placeholder string, it cannot be mistaken for application evidence.
     result["logs"] = result["current_logs"] + result["previous_logs"]
-    if not result["logs"]:
-        result["logs"] = ["no logs available"]
     return result
-
 
 def get_logs(namespace, pod_name, lines=30):
     """Backward-compatible combined log collector."""
