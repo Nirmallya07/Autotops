@@ -149,7 +149,7 @@ def configure_emit_test(monkeypatch, tmp_path, now):
     monkeypatch.setattr(
         watcher_main.k8s,
         "get_log_evidence",
-        lambda namespace, name: {"logs": [], "current_logs": [], "previous_logs": []},
+        lambda namespace, name, **kwargs: {"logs": [], "current_logs": [], "previous_logs": []},
     )
 
 
