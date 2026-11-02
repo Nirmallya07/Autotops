@@ -1,0 +1,17 @@
+{
+  "incident_id": "INC-TEST-002",
+  "service": "demo-api",
+  "namespace": "default",
+  "failure_type": "CrashLoopBackOff",
+  "severity": "HIGH",
+  "detected_at": "2026-10-08T10:00:00Z",
+  "status": "OPEN",
+  "evidence": {
+    "pod_status": {
+      "phase": "CrashLoopBackOff"
+    },
+    "kubernetes_events": [],
+    "metrics": {},
+    "logs": []
+  }
+}

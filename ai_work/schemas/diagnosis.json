@@ -1,0 +1,38 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "AutoTops Diagnosis",
+    "type": "object",
+    "required": [
+        "incident_id",
+        "root_cause",
+        "evidence",
+        "confidence",
+        "recommended_action"
+    ],
+    "properties": {
+        "incident_id": {
+            "type": "string",
+            "minLength": 1
+        },
+        "root_cause": {
+            "type": "string",
+            "minLength": 1
+        },
+        "evidence": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+        },
+        "recommended_action": {
+            "type": "string",
+            "minLength": 1
+        }
+    },
+    "additionalProperties": false
+}

@@ -1,15 +1,26 @@
 import re
 from kubernetes import client, config
 
-try:
-    config.load_incluster_config()
-except config.ConfigException:
-    config.load_kube_config()
+_v1 = None
 
-v1 = client.CoreV1Api()
+
+def get_kubernetes_client():
+    """Load Kubernetes configuration only when an API call is needed."""
+    global _v1
+
+    if _v1 is None:
+        try:
+            config.load_incluster_config()
+        except config.ConfigException:
+            config.load_kube_config()
+
+        _v1 = client.CoreV1Api()
+
+    return _v1
 
 
 def get_pods(namespace, app_label):
+    v1 = get_kubernetes_client()
     pods = v1.list_namespaced_pod(
         namespace, label_selector=f"app={app_label}"
     ).items
@@ -46,6 +57,7 @@ def pod_status(pod):
 
 
 def get_events(namespace, pod_name, limit=10):
+    v1 = get_kubernetes_client()
     events = v1.list_namespaced_event(
         namespace, field_selector=f"involvedObject.name={pod_name}"
     ).items
@@ -70,6 +82,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def get_logs(namespace, pod_name, lines=30):
+    v1 = get_kubernetes_client()
     noise = ("GET /health", "GET /metrics")
     for previous in (False, True):
         try:
