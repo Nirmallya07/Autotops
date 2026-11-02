@@ -84,16 +84,20 @@ async function loadAiAnalysis(incidentId) {
         const diagnosis = analysis.diagnosis || {};
         const health = analysis.health_check || {};
         const proposal = analysis.proposal;
-        const actions = proposal?.actions || proposal?.steps || [];
+        const proposedAction = proposal?.action;
+        const proposalReason = proposal?.reason;
 
         target.innerHTML = `
             <div><b>AI status:</b> ${esc(analysis.status || "Not available")}</div>
             <div><b>Lifecycle:</b> ${esc(lifecycle.current_status || "Not recorded")}</div>
-            <div><b>Diagnosis:</b> ${esc(diagnosis.summary || diagnosis.description || diagnosis.root_cause || "See full analysis JSON")}</div>
+            <div><b>Diagnosis:</b> ${esc(diagnosis.root_cause || diagnosis.summary || diagnosis.description || "Not available")}</div>
+            <div><b>Recommended diagnostic action:</b> ${esc(diagnosis.recommended_action || "-")}</div>
             <div><b>Live health:</b> ${esc(health.status || "Not available")}</div>
             <div><b>Health reason:</b> ${esc(health.reason || "-")}</div>
-            <div><b>Human approval:</b> ${proposal ? "Required before remediation" : "No remediation proposal generated"}</div>
-            ${actions.length ? `<div><b>Proposed actions:</b><ul>${actions.map(action => `<li>${esc(typeof action === "string" ? action : (action.description || action.action || JSON.stringify(action)))}</li>`).join("")}</ul></div>` : ""}
+            <div><b>Proposed remediation:</b> ${esc(proposedAction || "None")}</div>
+            <div><b>Proposal reason:</b> ${esc(proposalReason || "-")}</div>
+            <div><b>Risk:</b> ${esc(proposal?.risk || "-")}</div>
+            <div><b>Human approval:</b> ${proposal?.approval_required ? "Required before remediation" : "Not required / no proposal"}</div>
             <div class="muted">Execution performed: ${analysis.execution_performed ? "Yes" : "No"}</div>
         `;
     } catch (error) {
@@ -111,7 +115,7 @@ function render(d) {
 
     // Keep demo controls unavailable unless Kubernetes reports a running,
     // non-terminating application pod.
-    document.querySelectorAll("button").forEach(button => {
+    document.querySelectorAll(".actions button").forEach(button => {
         button.disabled = !triggerAvailable || d.demo?.state === "running";
         button.title = triggerAvailable
             ? ""
