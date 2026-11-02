@@ -20,6 +20,7 @@ from ai_work.ai_pipeline.recovery.health_checker import (
     HEALTHY_NOW,
     IDENTITY_CHANGED,
     POD_NOT_FOUND,
+    UNKNOWN,
     KubernetesHealthChecker,
 )
 
