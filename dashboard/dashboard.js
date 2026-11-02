@@ -4,6 +4,9 @@ function setBusy(b) {
     });
 }
 
+// Keep expanded AI assessments available when the live dashboard re-renders.
+const aiAnalysisCache = new Map();
+
 
 async function runDemo(kind) {
     setBusy(true);
@@ -67,6 +70,7 @@ function esc(v) {
 async function loadAiAnalysis(incidentId) {
     const target = document.getElementById("ai-analysis-" + incidentId);
     if (!target) return;
+    aiAnalysisCache.set(incidentId, "Loading AI assessment...");
     target.textContent = "Loading AI assessment...";
 
     try {
@@ -87,7 +91,7 @@ async function loadAiAnalysis(incidentId) {
         const proposedAction = proposal?.action;
         const proposalReason = proposal?.reason;
 
-        target.innerHTML = `
+        const analysisHtml = `
             <div><b>AI status:</b> ${esc(analysis.status || "Not available")}</div>
             <div><b>Lifecycle:</b> ${esc(lifecycle.current_status || "Not recorded")}</div>
             <div><b>Diagnosis:</b> ${esc(diagnosis.root_cause || diagnosis.summary || diagnosis.description || "Not available")}</div>
@@ -100,8 +104,14 @@ async function loadAiAnalysis(incidentId) {
             <div><b>Human approval:</b> ${proposal?.approval_required ? "Required before remediation" : "Not required / no proposal"}</div>
             <div class="muted">Execution performed: ${analysis.execution_performed ? "Yes" : "No"}</div>
         `;
+        aiAnalysisCache.set(incidentId, analysisHtml);
+        const currentTarget = document.getElementById("ai-analysis-" + incidentId);
+        if (currentTarget) currentTarget.innerHTML = analysisHtml;
     } catch (error) {
-        target.textContent = "Could not load AI assessment: " + error;
+        const errorMessage = "Could not load AI assessment: " + error;
+        aiAnalysisCache.set(incidentId, errorMessage);
+        const currentTarget = document.getElementById("ai-analysis-" + incidentId);
+        if (currentTarget) currentTarget.textContent = errorMessage;
     }
 }
 
@@ -235,6 +245,20 @@ function render(d) {
         `).join("")
         : "No incidents yet.";
 
+    // Restore expanded AI panels after each live incident-list update.
+    for (const [incidentId, html] of aiAnalysisCache) {
+        const panel = document.getElementById("ai-analysis-" + incidentId);
+        if (panel) {
+            if (html.startsWith("Could not load") || html === "Loading AI assessment...") {
+                panel.textContent = html;
+            } else {
+                panel.innerHTML = html;
+            }
+        }
+    }
+
+
+
 
     // Demo logs
     document.getElementById("log").textContent =
@@ -263,5 +287,6 @@ async function refresh() {
 refresh();
 
 
-// Refresh dashboard every two seconds
-setInterval(refresh, 2000);
+// Refresh live cluster and incident data every ten seconds.
+// Expanded AI assessments are cached and remain visible between refreshes.
+setInterval(refresh, 10000);
