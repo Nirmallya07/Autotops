@@ -12,6 +12,7 @@ STATUS_FILE = RUNTIME_DIR / "demo_status.json"
 LOG_FILE = RUNTIME_DIR / "demo.log"
 SERVICE = os.environ.get("SERVICE", "autotops-demo")
 NAMESPACE = os.environ.get("NAMESPACE", "default")
+DEMO_LOCK = threading.Lock()
 
 def run_cmd(args, timeout=10):
     try:
@@ -31,8 +32,12 @@ def get_status():
     return {"state": "idle", "demo": "", "message": "Ready"}
 
 def run_demo(kind):
-    if get_status().get("state") == "running": return
-    set_status("running", kind, "Running " + kind + " failure demo...")
+    # Atomically reserve the single demo slot before starting the worker.
+    with DEMO_LOCK:
+        if get_status().get("state") == "running":
+            return False
+        set_status("running", kind, "Running " + kind + " failure demo...")
+
     def worker():
         with LOG_FILE.open("w") as log:
             try:
@@ -45,6 +50,7 @@ def run_demo(kind):
                 log.write("\nDashboard error: " + str(e) + "\n")
                 set_status("error", kind, str(e))
     threading.Thread(target=worker, daemon=True).start()
+    return True
 
 def kubectl_json(args):
     r = run_cmd(["kubectl", "-n", NAMESPACE] + args)
@@ -66,8 +72,16 @@ def cluster_status():
         terminated = cs.get("state", {}).get("terminated") or {}
         last = cs.get("lastState", {}).get("terminated") or {}
         terminating = bool(metadata.get("deletionTimestamp"))
-        running_container = any(bool(item.get("state", {}).get("running")) for item in statuses)
-        eligible = (not terminating and pod_status.get("phase") == "Running" and running_container)
+        # Require every application container to be running and ready.
+        containers_ready = bool(statuses) and all(
+            item.get("ready", False) and bool(item.get("state", {}).get("running"))
+            for item in statuses
+        )
+        eligible = (
+            not terminating
+            and pod_status.get("phase") == "Running"
+            and containers_ready
+        )
         trigger_available = trigger_available or eligible
         result.append({"name": metadata.get("name", ""), "phase": pod_status.get("phase", "Unknown"),
                        "ready": cs.get("ready", False), "restarts": cs.get("restartCount", 0),
@@ -168,12 +182,12 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/api/demo/crash", "/api/demo/oom"):
             kind = "crash" if path.endswith("crash") else "oom"
-            if get_status().get("state") == "running":
-                return self.send_json({"ok": False, "message": "A demo is already running."}, 409)
             allowed, message = demo_preflight()
             if not allowed:
                 return self.send_json({"ok": False, "message": message}, 409)
-            run_demo(kind); return self.send_json({"ok": True, "message": kind.upper() + " demo started."})
+            if not run_demo(kind):
+                return self.send_json({"ok": False, "message": "A demo is already running."}, 409)
+            return self.send_json({"ok": True, "message": kind.upper() + " demo started."})
         self.send_error(404)
     def log_message(self, fmt, *args): return
 
