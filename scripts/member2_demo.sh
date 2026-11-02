@@ -284,11 +284,15 @@ run_ai_analysis() {
 
   echo "[8] Running AI incident assessment..."
   echo "    Diagnoser:        ${AI_DIAGNOSER:-mock}"
+  if [[ "${AI_DIAGNOSER:-mock}" == "ollama" ]]; then
+    echo "    Ollama model:     ${AI_OLLAMA_MODEL:-llama3.2:3b}"
+  fi
   echo "    Stability window: ${AI_STABILITY_WINDOW_SECONDS:-60}s"
   echo "    Result:           $analysis_path"
 
   "$PYTHON_BIN" -m ai_work.ai_pipeline.runner "$incident_path" \
     --diagnoser "${AI_DIAGNOSER:-mock}" \
+    --ollama-model "${AI_OLLAMA_MODEL:-llama3.2:3b}" \
     --stability-window-seconds "${AI_STABILITY_WINDOW_SECONDS:-60}" \
     --stability-interval-seconds "${AI_STABILITY_INTERVAL_SECONDS:-10}" \
     --lifecycle-dir "$lifecycle_dir" \
