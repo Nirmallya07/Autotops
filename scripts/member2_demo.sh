@@ -381,7 +381,7 @@ HEADER
   ALLOC_MB=${ALLOC_MB:-600}
   echo "[2/5] Kubernetes detecting failure..."
   echo "      Triggering /alloc?mb=${ALLOC_MB} on pod $P (in-cluster exec)"
-  kubectl -n "$NAMESPACE" exec --stdin --tty "$P" -- /bin/sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/alloc?mb=${ALLOC_MB}')\" || true" >/dev/null 2>&1 || true
+  kubectl -n "$NAMESPACE" exec "$P" -- /bin/sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/alloc?mb=${ALLOC_MB}')\" || true" >/dev/null 2>&1 || true
   # give Kubernetes a moment to record termination
   sleep 2
   wait_for_oom "$P"
