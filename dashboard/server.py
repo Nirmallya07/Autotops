@@ -128,7 +128,7 @@ def incidents():
                           "exit_code": ctr.get("last_exit_code"),
                           "ai_status": analysis.get("status"),
                           "lifecycle_status": lifecycle.get("current_status"),
-                          "analysis_available": analysis != {}})
+                          "analysis_available": (saved or {}).get("analysis") is not None})
         except Exception: pass
     return items
 
