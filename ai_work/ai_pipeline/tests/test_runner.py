@@ -182,3 +182,32 @@ def test_runner_persists_approval_required_lifecycle(tmp_path):
     lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
     assert result["status"] == "AWAITING_HUMAN_APPROVAL"
     assert lifecycle["current_status"] == "AWAITING_HUMAN_APPROVAL"
+
+def test_runner_passes_selected_model_to_ollama(monkeypatch):
+    from ai_work.ai_pipeline import runner
+
+    captured = {}
+
+    class FakeOllamaDiagnoser:
+        def __init__(self, model):
+            captured["model"] = model
+
+        def diagnose(self, context):
+            return {
+                "incident_id": context["incident_id"],
+                "root_cause": "Test diagnosis from selected Ollama model.",
+                "evidence": ["Test evidence"],
+                "confidence": 0.8,
+                "recommended_action": "Review the test evidence.",
+            }
+
+    monkeypatch.setattr(runner, "OllamaDiagnoser", FakeOllamaDiagnoser)
+    result = runner.process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="ollama",
+        ollama_model="qwen2.5:3b",
+        health_checker=FakeHealthChecker("UNKNOWN"),
+    )
+
+    assert captured["model"] == "qwen2.5:3b"
+    assert result["diagnosis"]["root_cause"] == "Test diagnosis from selected Ollama model."
