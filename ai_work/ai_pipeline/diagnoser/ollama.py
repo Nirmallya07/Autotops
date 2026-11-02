@@ -38,11 +38,35 @@ class OllamaDiagnoser(Diagnoser):
         return self._parse_response(incident, model_output)
 
     def _build_prompt(self, context):
+        # Prefer the separated log streams. The legacy combined "logs"
+        # field often contains the same entries and would duplicate evidence.
+        current_logs = context.get("current_logs")
+        previous_logs = context.get("previous_logs")
+
+        if current_logs is None:
+            current_logs = context.get("logs", [])
+
+        # Remove repeated lines while preserving their original order.
+        def unique_lines(lines):
+            if not isinstance(lines, list):
+                return []
+            seen = set()
+            result = []
+            for line in lines:
+                key = str(line).strip()
+                if key and key not in seen:
+                    seen.add(key)
+                    result.append(line)
+            return result
+
         evidence = {
             "pod_status": context.get("pod_status", {}),
             "kubernetes_events": context.get("kubernetes_events", []),
             "metrics": context.get("metrics", {}),
-            "logs": context.get("logs", []),
+            "current_logs": unique_lines(current_logs),
+            "previous_logs": unique_lines(previous_logs),
+            "log_collection": context.get("log_collection", {}),
+            "event_collection": context.get("event_collection", {}),
         }
 
         return f"""
@@ -50,6 +74,7 @@ You are the diagnostic component of AutoTops.
 
 Analyze only the supplied incident evidence.
 Do not invent evidence.
+Log and event collection metadata describes what the watcher could retrieve; it is an observability record, not proof of an application failure.
 Do not execute commands.
 Do not claim that remediation has been executed.
 
@@ -70,12 +95,30 @@ Return exactly one JSON object with these four fields:
   "recommended_action": "recommended next action"
 }}
 
-Requirements:
-- root_cause must be a plain string, not another JSON object.
-- evidence must be a list of strings.
-- confidence must be a number from 0 to 1.
+Diagnostic reasoning rules:
+- Distinguish observed facts from hypotheses. Never present a hypothesis as a confirmed cause.
+- CrashLoopBackOff is a Kubernetes symptom describing repeated container failures, not the underlying application root cause.
+- A non-zero exit code or last termination reason of Error confirms an unsuccessful termination, but does not by itself explain why it happened.
+- Examine application log messages for explicit descriptions of the action or error immediately associated with termination before relying on generic Kubernetes status fields.
+- Evidence priority: (1) explicit application error or termination messages, (2) surrounding previous-container logs, (3) current-container logs, (4) Kubernetes events and termination details, (5) metrics and generic runtime messages.
+- When an application log explicitly identifies the action that terminated the process, state that action as the evidence-supported cause. Do not replace it with the less-informative statement that the container merely exited with an error.
+- Treat startup messages, routine informational output, and generic runtime warnings as context, not causal evidence, unless the supplied evidence directly connects them to the failure.
+- Use only the supplied logs, pod status, events, metrics, and collection metadata. Do not infer a specific code defect, configuration error, resource shortage, or dependency failure unless the evidence supports it.
+- Treat log_collection and event_collection statuses and error messages only as collection diagnostics. Never cite a Kubernetes API error, missing previous-log stream, permission problem, or empty log response as the application root cause.
+- If a log stream or event collection has status "error" or "unavailable", explicitly account for that evidence gap when choosing confidence and the recommended next diagnostic step. Do not describe a failed collection request as proof that the application produced no logs or events.
+- If no application log or other evidence identifies the underlying cause, explicitly say that the exact root cause cannot yet be determined; state the observed termination separately.
+- Recommend the most useful next diagnostic step. For CrashLoopBackOff, prioritize inspecting current and previous container logs and correlating them with termination details and recent events. Do not recommend increasing retry counts, changing restart policies, or restarting a pod as a substitute for identifying the cause unless the evidence specifically justifies that action.
+- Keep recommendations operational, specific, and proportional to the evidence.
+- Do not treat generic runtime or development-server warnings as the cause unless they are linked to the observed failure.
+- Prefer specific error messages that directly explain the failure; do not cite unrelated startup messages or generic warnings as supporting evidence.
+- Do not repeat the same evidence item more than once in the evidence list.
+
+Output requirements:
+- root_cause must be a plain string that clearly labels confirmed facts and, where needed, an unconfirmed hypothesis.
+- evidence must be a list of strings containing only facts present in the supplied incident.
+- confidence must be a number from 0 to 1 and reflect how strongly the evidence supports the stated root cause. Use lower confidence when the exact cause is unknown.
 - recommended_action must be a plain string.
-- Return no additional fields or surrounding text.
+- Return exactly the four requested fields, with no surrounding text.
 """
 
     def _decode_json(self, value):

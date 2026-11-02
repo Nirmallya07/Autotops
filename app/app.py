@@ -48,7 +48,12 @@ def failure():
 
 @app.route("/crash")
 def crash():
-    # Crash the process immediately to allow Kubernetes to detect CrashLoopBackOff on restart.
+    # Record why the process is terminating before the intentional hard exit.
+    app.logger.error(
+        "AUTOTOPS_TEST_FAILURE: Intentional process termination "
+        "triggered through the /crash endpoint."
+    )
+    # Exit immediately so Kubernetes can detect and restart the failed container.
     os._exit(1)
 
 

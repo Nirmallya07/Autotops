@@ -1,7 +1,37 @@
 function setBusy(b) {
-    document.querySelectorAll("button").forEach(button => {
+    document.querySelectorAll(".actions button").forEach(button => {
         button.disabled = b;
     });
+}
+
+// Keep expanded AI assessments available when the live dashboard re-renders.
+const aiAnalysisCache = new Map();
+const expandedAiPanels = new Set();
+const loadedAiAnalyses = new Set();
+
+function toggleAiAnalysis(incidentId) {
+    const panel = document.getElementById("ai-analysis-" + incidentId);
+    if (!panel) return;
+    const button = document.querySelector('[data-ai-toggle="' + CSS.escape(incidentId) + '"]');
+
+    if (expandedAiPanels.has(incidentId)) {
+        expandedAiPanels.delete(incidentId);
+        panel.hidden = true;
+        if (button) button.textContent = "View AI Analysis";
+        return;
+    }
+
+    expandedAiPanels.add(incidentId);
+    panel.hidden = false;
+    if (button) button.textContent = "Hide AI Analysis";
+
+    if (loadedAiAnalyses.has(incidentId)) {
+        const cached = aiAnalysisCache.get(incidentId) || "";
+        if (cached.startsWith("Could not load")) panel.textContent = cached;
+        else panel.innerHTML = cached;
+    } else {
+        loadAiAnalysis(incidentId);
+    }
 }
 
 
@@ -64,6 +94,62 @@ function esc(v) {
 }
 
 
+async function loadAiAnalysis(incidentId) {
+    const target = document.getElementById("ai-analysis-" + incidentId);
+    if (!target) return;
+    aiAnalysisCache.set(incidentId, "Loading AI assessment...");
+    target.textContent = "Loading AI assessment...";
+
+    try {
+        const response = await fetch("/api/incidents/" + encodeURIComponent(incidentId), {
+            cache: "no-store"
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            target.textContent = data.message || "AI assessment is not available yet.";
+            return;
+        }
+
+        const analysis = data.analysis || {};
+        const lifecycle = data.lifecycle || {};
+        const diagnosis = analysis.diagnosis || {};
+        const health = analysis.health_check || {};
+        const proposal = analysis.proposal;
+        const proposedAction = proposal?.action;
+        const proposalReason = proposal?.reason;
+
+        const analysisHtml = `
+            <div><b>AI status:</b> ${esc(analysis.status || "Not available")}</div>
+            <div><b>Lifecycle:</b> ${esc(lifecycle.current_status || "Not recorded")}</div>
+            <div><b>AI engine:</b> ${esc(diagnosis.diagnoser || "Unknown")}${diagnosis.model ? " · Model: " + esc(diagnosis.model) : ""}</div>
+            <div><b>Diagnosis:</b> ${esc(diagnosis.root_cause || diagnosis.summary || diagnosis.description || "Not available")}</div>
+            <div><b>Recommended diagnostic action:</b> ${esc(diagnosis.recommended_action || "-")}</div>
+            <div><b>Live health:</b> ${esc(health.status || "Not available")}</div>
+            <div><b>Health reason:</b> ${esc(health.reason || "-")}</div>
+            <div><b>Proposed remediation:</b> ${esc(proposedAction || "None")}</div>
+            <div><b>Proposal reason:</b> ${esc(proposalReason || "-")}</div>
+            <div><b>Risk:</b> ${esc(proposal?.risk || "-")}</div>
+            <div><b>Human approval:</b> ${proposal?.approval_required ? "Required before remediation" : "Not required / no proposal"}</div>
+            <div class="muted">Execution performed: ${analysis.execution_performed ? "Yes" : "No"}</div>
+        `;
+        aiAnalysisCache.set(incidentId, analysisHtml);
+        loadedAiAnalyses.add(incidentId);
+        const currentTarget = document.getElementById("ai-analysis-" + incidentId);
+        if (currentTarget && expandedAiPanels.has(incidentId)) {
+            currentTarget.innerHTML = analysisHtml;
+        }
+    } catch (error) {
+        const errorMessage = "Could not load AI assessment: " + error;
+        aiAnalysisCache.set(incidentId, errorMessage);
+        loadedAiAnalyses.add(incidentId);
+        const currentTarget = document.getElementById("ai-analysis-" + incidentId);
+        if (currentTarget && expandedAiPanels.has(incidentId)) {
+            currentTarget.textContent = errorMessage;
+        }
+    }
+}
+
+
 function render(d) {
     let c = d.cluster || {};
     let p = (c.pods || [])[0];
@@ -73,7 +159,7 @@ function render(d) {
 
     // Keep demo controls unavailable unless Kubernetes reports a running,
     // non-terminating application pod.
-    document.querySelectorAll("button").forEach(button => {
+    document.querySelectorAll(".actions button").forEach(button => {
         button.disabled = !triggerAvailable || d.demo?.state === "running";
         button.title = triggerAvailable
             ? ""
@@ -178,9 +264,37 @@ function render(d) {
                     Reason: ${esc(i.reason || "-")}
                     · Exit: ${i.exit_code ?? "-"}
                 </div>
+
+                <div class="meta">
+                    AI: ${esc(i.ai_status || "Not run")}
+                    · Lifecycle: ${esc(i.lifecycle_status || "Not recorded")}
+                </div>
+
+                <button class="secondary-button" data-ai-toggle="${esc(i.incident_id)}"
+                    onclick="toggleAiAnalysis('${esc(i.incident_id)}')"
+                    ${i.analysis_available ? "" : "disabled"}>
+                    ${expandedAiPanels.has(i.incident_id) ? "Hide AI Analysis" : "View AI Analysis"}
+                </button>
+                <div class="ai-analysis" id="ai-analysis-${esc(i.incident_id)}"
+                    ${expandedAiPanels.has(i.incident_id) ? "" : "hidden"}></div>
             </div>
         `).join("")
         : "No incidents yet.";
+
+    // Restore expanded AI panels after each live incident-list update.
+    for (const [incidentId, html] of aiAnalysisCache) {
+        const panel = document.getElementById("ai-analysis-" + incidentId);
+        if (panel && expandedAiPanels.has(incidentId)) {
+            panel.hidden = false;
+            if (html.startsWith("Could not load") || html === "Loading AI assessment...") {
+                panel.textContent = html;
+            } else {
+                panel.innerHTML = html;
+            }
+        }
+    }
+
+
 
 
     // Demo logs
@@ -210,5 +324,6 @@ async function refresh() {
 refresh();
 
 
-// Refresh dashboard every two seconds
-setInterval(refresh, 2000);
+// Refresh live cluster and incident data every ten seconds.
+// Expanded AI assessments are cached and remain visible between refreshes.
+setInterval(refresh, 15000);

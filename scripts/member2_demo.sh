@@ -31,6 +31,7 @@ fi
 # Prometheus stub control (top-level to avoid nested function parsing issues)
 PROM_STUB_PID=""
 PROM_STUB_PORT=""
+NEW_INCIDENT_PATH=""
 start_prom_stub() {
   for port in 19090 19091 19092; do
     "$PYTHON_BIN" -u - "$port" <<PY >/dev/null 2>&1 &
@@ -238,7 +239,8 @@ validate_and_show() {
     echo "No incident file found in $INCIDENT_DIR" >&2
     return 1
   fi
-  echo "[6] Incident file: $newest"
+  NEW_INCIDENT_PATH="$newest"
+  echo "[6] Incident file: $NEW_INCIDENT_PATH"
   # Print a concise summary of the incident (no full JSON dump)
   "$PYTHON_BIN" - <<PY
 import json,sys
@@ -268,6 +270,35 @@ inc=json.loads(open('$newest').read())
 validate(inc,schema)
 print('    Schema:      PASSED')
 PY
+}
+
+run_ai_analysis() {
+  local incident_path="$1"
+  local incident_stem analysis_dir lifecycle_dir analysis_path
+  incident_stem=$(basename "$incident_path" .json)
+  analysis_dir="$INCIDENT_DIR/analysis"
+  lifecycle_dir="$INCIDENT_DIR/lifecycle"
+  analysis_path="$analysis_dir/${incident_stem}.json"
+
+  mkdir -p "$analysis_dir" "$lifecycle_dir"
+
+  echo "[8] Running AI incident assessment..."
+  echo "    Diagnoser:        ${AI_DIAGNOSER:-mock}"
+  if [[ "${AI_DIAGNOSER:-mock}" == "ollama" ]]; then
+    echo "    Ollama model:     ${AI_OLLAMA_MODEL:-llama3.2:3b}"
+  fi
+  echo "    Stability window: ${AI_STABILITY_WINDOW_SECONDS:-60}s"
+  echo "    Result:           $analysis_path"
+
+  "$PYTHON_BIN" -m ai_work.ai_pipeline.runner "$incident_path" \
+    --diagnoser "${AI_DIAGNOSER:-mock}" \
+    --ollama-model "${AI_OLLAMA_MODEL:-llama3.2:3b}" \
+    --stability-window-seconds "${AI_STABILITY_WINDOW_SECONDS:-60}" \
+    --stability-interval-seconds "${AI_STABILITY_INTERVAL_SECONDS:-10}" \
+    --lifecycle-dir "$lifecycle_dir" \
+    --output "$analysis_path"
+
+  echo "[8] AI assessment completed."
 }
 
 demo_crash() {
@@ -312,8 +343,9 @@ HEADER
   echo "[4/5] Incident created"
   # Print concise incident summary and validate only the incident created by this run
   validate_and_show "$PRE_EXISTING" "CrashLoopBackOff"
+  run_ai_analysis "$NEW_INCIDENT_PATH"
 
-  echo "[5/5] Validating incident schema..."
+  echo "[5/5] Incident schema and AI assessment completed..."
   echo
   echo "------------------------------------------------------------"
   echo "RESULT: SUCCESS"
@@ -349,7 +381,7 @@ HEADER
   ALLOC_MB=${ALLOC_MB:-600}
   echo "[2/5] Kubernetes detecting failure..."
   echo "      Triggering /alloc?mb=${ALLOC_MB} on pod $P (in-cluster exec)"
-  kubectl -n "$NAMESPACE" exec --stdin --tty "$P" -- /bin/sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/alloc?mb=${ALLOC_MB}')\" || true" >/dev/null 2>&1 || true
+  kubectl -n "$NAMESPACE" exec "$P" -- /bin/sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/alloc?mb=${ALLOC_MB}')\" || true" >/dev/null 2>&1 || true
   # give Kubernetes a moment to record termination
   sleep 2
   wait_for_oom "$P"
@@ -366,8 +398,9 @@ HEADER
 
   echo "[4/5] Incident created"
   validate_and_show "$PRE_EXISTING" "OOMKilled"
+  run_ai_analysis "$NEW_INCIDENT_PATH"
 
-  echo "[5/5] Validating incident schema..."
+  echo "[5/5] Incident schema and AI assessment completed..."
   echo
   echo "------------------------------------------------------------"
   echo "RESULT: SUCCESS"

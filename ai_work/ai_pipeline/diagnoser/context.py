@@ -23,4 +23,8 @@ class DiagnosticContext:
             "kubernetes_events": evidence.get("kubernetes_events", []),
             "metrics": evidence.get("metrics", {}),
             "logs": evidence.get("logs", []),
+            "current_logs": evidence.get("current_logs", evidence.get("logs", [])),
+            "previous_logs": evidence.get("previous_logs", []),
+            "log_collection": evidence.get("log_collection", {}),
+            "event_collection": evidence.get("event_collection", {}),
         }

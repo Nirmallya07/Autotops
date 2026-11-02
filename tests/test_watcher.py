@@ -8,6 +8,7 @@ import pytest
 from jsonschema import ValidationError
 
 import rules
+import main as watcher_main
 from incident import create_incident
 
 
@@ -131,3 +132,90 @@ def test_incident_rejects_unknown_failure_type():
 def test_incident_rejects_missing_evidence_field():
     with pytest.raises(ValidationError):
         create_incident("INC-001", "autotops-demo", "default", "OOMKilled", "HIGH", {"logs": []})
+
+
+
+class FakePod:
+    class Metadata:
+        name = "autotops-test"
+
+    metadata = Metadata()
+
+
+def configure_emit_test(monkeypatch, tmp_path, now):
+    monkeypatch.setattr(watcher_main, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(watcher_main.time, "time", lambda: now)
+    monkeypatch.setattr(watcher_main.k8s, "get_events", lambda namespace, name: [])
+    monkeypatch.setattr(
+        watcher_main.k8s,
+        "get_log_evidence",
+        lambda namespace, name, **kwargs: {"logs": [], "current_logs": [], "previous_logs": []},
+    )
+
+
+def test_emit_suppresses_same_oom_signature_within_freshness_window(monkeypatch, tmp_path):
+    now = 1_000_000.0
+    configure_emit_test(monkeypatch, tmp_path, now)
+    active = {}
+    status = pod(last_reason="OOMKilled", exit_code=137)
+    key = ("OOMKilled", "pod-uid-1", ("2026-11-03T00:00:00+00:00",))
+
+    assert watcher_main.emit(key, "OOMKilled", "HIGH", FakePod(), status, {}, active)
+    assert not watcher_main.emit(key, "OOMKilled", "HIGH", FakePod(), status, {}, active)
+    assert len(list(tmp_path.glob("INC-*.json"))) == 1
+
+
+def test_emit_allows_new_oom_signature(monkeypatch, tmp_path):
+    now = 1_000_000.0
+    configure_emit_test(monkeypatch, tmp_path, now)
+    active = {}
+    status = pod(last_reason="OOMKilled", exit_code=137)
+
+    first = ("OOMKilled", "pod-uid-1", ("2026-11-03T00:00:00+00:00",))
+    second = ("OOMKilled", "pod-uid-1", ("2026-11-03T00:01:00+00:00",))
+
+    assert watcher_main.emit(first, "OOMKilled", "HIGH", FakePod(), status, {}, active)
+    assert watcher_main.emit(second, "OOMKilled", "HIGH", FakePod(), status, {}, active)
+    assert len(list(tmp_path.glob("INC-*.json"))) == 2
+
+
+def test_crashloop_keeps_configured_cooldown(monkeypatch, tmp_path):
+    now = 1_000_000.0
+    configure_emit_test(monkeypatch, tmp_path, now)
+    active = {}
+    status = pod(waiting="CrashLoopBackOff", restarts=2)
+    key = ("CrashLoopBackOff", "pod-uid-1")
+
+    assert watcher_main.emit(key, "CrashLoopBackOff", "HIGH", FakePod(), status, {}, active)
+    monkeypatch.setattr(watcher_main.time, "time", lambda: now + watcher_main.COOLDOWN - 1)
+    assert not watcher_main.emit(key, "CrashLoopBackOff", "HIGH", FakePod(), status, {}, active)
+    assert len(list(tmp_path.glob("INC-*.json"))) == 1
+
+
+def test_emit_preserves_incident_when_event_and_log_collection_fail(monkeypatch, tmp_path):
+    now = 2_000_000.0
+    configure_emit_test(monkeypatch, tmp_path, now)
+
+    def fail_logs(namespace, name, **kwargs):
+        raise RuntimeError("Kubernetes API unavailable")
+
+    monkeypatch.setattr(watcher_main.k8s, "get_log_evidence", fail_logs)
+    monkeypatch.setattr(
+        watcher_main.k8s, "get_events",
+        lambda namespace, name: (_ for _ in ()).throw(PermissionError("forbidden")),
+    )
+    active = {}
+    status = pod(waiting="CrashLoopBackOff", restarts=2)
+
+    assert watcher_main.emit(
+        ("CrashLoopBackOff", "pod-uid-2"),
+        "CrashLoopBackOff", "HIGH", FakePod(), status, {}, active,
+    )
+    incident = __import__("json").loads(
+        next(tmp_path.glob("INC-*.json")).read_text()
+    )
+    evidence = incident["evidence"]
+    assert evidence["event_collection"]["status"] == "error"
+    assert evidence["event_collection"]["error"]["type"] == "PermissionError"
+    assert evidence["log_collection"]["status"] == "error"
+    assert evidence["logs"] == []

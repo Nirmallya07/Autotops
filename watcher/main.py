@@ -19,6 +19,17 @@ def _key_id(key):
     return json.dumps(key, separators=(",", ":"), sort_keys=True)
 
 
+def _suppression_window(key_id):
+    """Keep an OOM signature suppressed for at least its detection freshness window."""
+    try:
+        key = json.loads(key_id)
+    except (TypeError, ValueError):
+        return COOLDOWN
+    if isinstance(key, list) and key and key[0] == "OOMKilled":
+        return max(COOLDOWN, rules.OOM_FRESHNESS_SECONDS)
+    return COOLDOWN
+
+
 def load_active_incidents(path=ACTIVE_STATE):
     try:
         data = json.loads(path.read_text())
@@ -41,20 +52,69 @@ def save_active_incidents(active, path=ACTIVE_STATE):
     tmp.replace(path)
 
 
-def emit(key, failure_type, severity, pod, status, metrics, active):
+def emit(key, failure_type, severity, pod, status, metrics, active, events=None, event_error=None):
     now = time.time()
     key_id = _key_id(key)
     last_emitted = active.get(key_id)
-    if last_emitted is not None and now - last_emitted < COOLDOWN:
-        print(f"[WATCHER] duplicate suppressed ({int(COOLDOWN - (now - last_emitted))}s cooldown): {failure_type} pod={status.get('name')}", flush=True)
+    window = _suppression_window(key_id)
+    if last_emitted is not None and now - last_emitted < window:
+        remaining = int(window - (now - last_emitted))
+        print(f"[WATCHER] duplicate suppressed ({remaining}s cooldown): {failure_type} pod={status.get('name')}", flush=True)
         return False
 
     name = pod.metadata.name
+    event_collection = {"status": "collected"}
+    if event_error is not None:
+        event_collection = {
+            "status": "error",
+            "error": {
+                "type": type(event_error).__name__,
+                "message": str(event_error)[:500],
+            },
+        }
+    if events is None:
+        try:
+            events = k8s.get_events(NAMESPACE, name)
+        except Exception as error:
+            events = []
+            event_collection = {
+                "status": "error",
+                "error": {
+                    "type": type(error).__name__,
+                    "message": str(error)[:500],
+                },
+            }
+    else:
+        events = list(events)
+
+    try:
+        log_evidence = k8s.get_log_evidence(
+            NAMESPACE, name,
+            container_names=[c["name"] for c in status.get("containers", [])],
+        )
+    except Exception as error:
+        # A log API/client failure must not prevent an otherwise valid
+        # incident from being recorded.
+        log_evidence = {
+            "current_logs": [],
+            "previous_logs": [],
+            "logs": [],
+            "log_collection": {
+                "containers": {},
+                "status": "error",
+                "error": {
+                    "type": type(error).__name__,
+                    "message": str(error)[:500],
+                },
+            },
+        }
+
     evidence = {
         "pod_status": status,
-        "kubernetes_events": k8s.get_events(NAMESPACE, name),
+        "kubernetes_events": events,
+        "event_collection": event_collection,
         "metrics": metrics,
-        "logs": k8s.get_logs(NAMESPACE, name),
+        **log_evidence,
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     incident = create_incident(next_incident_id(OUT_DIR), SERVICE, NAMESPACE,
@@ -81,7 +141,7 @@ def run_once():
     active = load_active_incidents()
     now = time.time()
     # Expire old suppression records so a later recurrence is not blocked forever.
-    active = {key: ts for key, ts in active.items() if now - ts < COOLDOWN}
+    active = {key: ts for key, ts in active.items() if now - ts < _suppression_window(key)}
 
     for pod in pods:
         status = k8s.pod_status(pod)
@@ -89,18 +149,23 @@ def run_once():
         restarts = max([c["restart_count"] for c in containers] or [0])
         pod_uid = status.get("uid") or status.get("name")
 
-        events = k8s.get_events(NAMESPACE, status["name"])
+        event_error = None
+        try:
+            events = k8s.get_events(NAMESPACE, status["name"])
+        except Exception as error:
+            events = []
+            event_error = error
         sev = rules.check_crashloop(status, events)
         if sev:
             emit(("CrashLoopBackOff", pod_uid), "CrashLoopBackOff", sev,
-                 pod, status, {"restart_count": restarts}, active)
+                 pod, status, {"restart_count": restarts}, active, events=events, event_error=event_error)
 
         sev = rules.check_oom(status)
         if sev:
             oom_times = [c.get("last_terminated_at") for c in containers
                          if c.get("last_terminated_reason") == "OOMKilled"]
             emit(("OOMKilled", pod_uid, tuple(oom_times)), "OOMKilled", sev,
-                 pod, status, {"restart_count": restarts}, active)
+                 pod, status, {"restart_count": restarts}, active, events=events, event_error=event_error)
 
     sev, metrics = rules.check_5xx()
     if sev:
