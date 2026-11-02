@@ -38,6 +38,16 @@ class KubernetesHealthChecker:
                 pod_name=pod_name,
             )
 
+        # Older incident records may not contain a pod UID. Do not make a
+        # live request when the original workload identity cannot be verified.
+        if not previous.get("uid"):
+            return self._result(
+                incident, UNKNOWN,
+                "Incident evidence has no pod UID; recovery cannot be verified safely.",
+                pod_name=pod_name,
+                identity_verified=False,
+            )
+
         try:
             # Client setup can fail when kubeconfig or cluster access is absent.
             # Treat that as UNKNOWN rather than crashing incident processing.
