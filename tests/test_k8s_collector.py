@@ -1,6 +1,5 @@
 import pathlib
 import sys
-from types import SimpleNamespace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "watcher"))
 
@@ -35,10 +34,10 @@ class FakeCoreV1Api:
 
 def test_collects_current_and_previous_logs_for_each_container(monkeypatch):
     api = FakeCoreV1Api({
-        ("app", False): b"app current\\n",
-        ("app", True): b"app previous\\n",
-        ("sidecar", False): b"sidecar current\\n",
-        ("sidecar", True): b"sidecar previous\\n",
+        ("app", False): b"app current\n",
+        ("app", True): b"app previous\n",
+        ("sidecar", False): b"sidecar current\n",
+        ("sidecar", True): b"sidecar previous\n",
     })
     monkeypatch.setattr(k8s, "get_kubernetes_client", lambda: api)
 
@@ -58,7 +57,7 @@ def test_collects_current_and_previous_logs_for_each_container(monkeypatch):
 
 def test_log_collection_records_unavailable_previous_stream(monkeypatch):
     api = FakeCoreV1Api({
-        ("app", False): b"app started\\n",
+        ("app", False): b"app started\n",
         ("app", True): FakeApiError(404, "previous container instance not found"),
     })
     monkeypatch.setattr(k8s, "get_kubernetes_client", lambda: api)
@@ -111,7 +110,7 @@ def test_log_collection_handles_empty_successful_stream(monkeypatch):
 
 def test_log_collection_strips_ansi_and_health_noise(monkeypatch):
     api = FakeCoreV1Api({
-        ("app", False): b"\\x1b[31mERROR app failed\\x1b[0m\\nGET /health 200\\n",
+        ("app", False): b"\x1b[31mERROR app failed\x1b[0m\nGET /health 200\n",
         ("app", True): b"",
     })
     monkeypatch.setattr(k8s, "get_kubernetes_client", lambda: api)
