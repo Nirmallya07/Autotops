@@ -8,6 +8,7 @@ import pytest
 from jsonschema import ValidationError
 
 import rules
+import main as watcher_main
 from incident import create_incident
 
 
@@ -131,3 +132,61 @@ def test_incident_rejects_unknown_failure_type():
 def test_incident_rejects_missing_evidence_field():
     with pytest.raises(ValidationError):
         create_incident("INC-001", "autotops-demo", "default", "OOMKilled", "HIGH", {"logs": []})
+
+
+
+class FakePod:
+    class Metadata:
+        name = "autotops-test"
+
+    metadata = Metadata()
+
+
+def configure_emit_test(monkeypatch, tmp_path, now):
+    monkeypatch.setattr(watcher_main, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(watcher_main.time, "time", lambda: now)
+    monkeypatch.setattr(watcher_main.k8s, "get_events", lambda namespace, name: [])
+    monkeypatch.setattr(
+        watcher_main.k8s,
+        "get_log_evidence",
+        lambda namespace, name: {"logs": [], "current_logs": [], "previous_logs": []},
+    )
+
+
+def test_emit_suppresses_same_oom_signature_within_freshness_window(monkeypatch, tmp_path):
+    now = 1_000_000.0
+    configure_emit_test(monkeypatch, tmp_path, now)
+    active = {}
+    status = pod(last_reason="OOMKilled", exit_code=137)
+    key = ("OOMKilled", "pod-uid-1", ("2026-11-03T00:00:00+00:00",))
+
+    assert watcher_main.emit(key, "OOMKilled", "HIGH", FakePod(), status, {}, active)
+    assert not watcher_main.emit(key, "OOMKilled", "HIGH", FakePod(), status, {}, active)
+    assert len(list(tmp_path.glob("INC-*.json"))) == 1
+
+
+def test_emit_allows_new_oom_signature(monkeypatch, tmp_path):
+    now = 1_000_000.0
+    configure_emit_test(monkeypatch, tmp_path, now)
+    active = {}
+    status = pod(last_reason="OOMKilled", exit_code=137)
+
+    first = ("OOMKilled", "pod-uid-1", ("2026-11-03T00:00:00+00:00",))
+    second = ("OOMKilled", "pod-uid-1", ("2026-11-03T00:01:00+00:00",))
+
+    assert watcher_main.emit(first, "OOMKilled", "HIGH", FakePod(), status, {}, active)
+    assert watcher_main.emit(second, "OOMKilled", "HIGH", FakePod(), status, {}, active)
+    assert len(list(tmp_path.glob("INC-*.json"))) == 2
+
+
+def test_crashloop_keeps_configured_cooldown(monkeypatch, tmp_path):
+    now = 1_000_000.0
+    configure_emit_test(monkeypatch, tmp_path, now)
+    active = {}
+    status = pod(waiting="CrashLoopBackOff", restarts=2)
+    key = ("CrashLoopBackOff", "pod-uid-1")
+
+    assert watcher_main.emit(key, "CrashLoopBackOff", "HIGH", FakePod(), status, {}, active)
+    monkeypatch.setattr(watcher_main.time, "time", lambda: now + watcher_main.COOLDOWN - 1)
+    assert not watcher_main.emit(key, "CrashLoopBackOff", "HIGH", FakePod(), status, {}, active)
+    assert len(list(tmp_path.glob("INC-*.json"))) == 1
