@@ -81,19 +81,49 @@ def get_events(namespace, pod_name, limit=10):
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def get_logs(namespace, pod_name, lines=30):
-    v1 = get_kubernetes_client()
+def _read_log_stream(v1, namespace, pod_name, previous, lines):
+    """Read one container log stream without hiding errors from the caller."""
+    resp = v1.read_namespaced_pod_log(
+        pod_name,
+        namespace,
+        tail_lines=300,
+        previous=previous,
+        _preload_content=False,
+    )
+    text = ANSI.sub("", resp.data.decode("utf-8", errors="replace"))
     noise = ("GET /health", "GET /metrics")
-    for previous in (False, True):
+    useful = [
+        line for line in text.splitlines()
+        if line.strip() and not any(item in line for item in noise)
+    ]
+    return useful[-lines:]
+
+
+def get_log_evidence(namespace, pod_name, lines=30):
+    """Collect current and previous container logs as separate evidence."""
+    v1 = get_kubernetes_client()
+    result = {"current_logs": [], "previous_logs": []}
+
+    for previous, key in (
+        (False, "current_logs"),
+        (True, "previous_logs"),
+    ):
         try:
-            resp = v1.read_namespaced_pod_log(
-                pod_name, namespace, tail_lines=300, previous=previous,
-                _preload_content=False,
+            result[key] = _read_log_stream(
+                v1, namespace, pod_name, previous, lines
             )
-            text = ANSI.sub("", resp.data.decode("utf-8", errors="replace"))
-            useful = [l for l in text.splitlines() if l.strip() and not any(n in l for n in noise)]
-            if useful:
-                return useful[-lines:]
         except Exception:
-            continue
-    return ["no logs available"]
+            # A previous stream may not exist before the first restart.
+            # Keep the other stream even if one request fails.
+            result[key] = []
+
+    # Keep the original logs array for compatibility with existing consumers.
+    result["logs"] = result["current_logs"] + result["previous_logs"]
+    if not result["logs"]:
+        result["logs"] = ["no logs available"]
+    return result
+
+
+def get_logs(namespace, pod_name, lines=30):
+    """Backward-compatible combined log collector."""
+    return get_log_evidence(namespace, pod_name, lines)["logs"]
