@@ -77,3 +77,15 @@ python -m ai_work.ai_pipeline.runner scripts/member2_incidents/INC-054.json \\
 The model supplies the diagnosis only. Kubernetes health checks, recovery
 verification, approval requirements, and the no-automatic-execution boundary
 remain enforced by the pipeline.
+
+
+## Ollama diagnosis quality
+
+The Ollama prompt requires the model to separate observed evidence from
+hypotheses. In particular, `CrashLoopBackOff` is treated as a symptom rather
+than an explanation of the underlying application failure. When logs do not
+show the actual error, the model must state that the exact cause is unknown and
+recommend collecting more useful evidence, such as current and previous
+container logs. Generic runtime warnings must not be presented as the cause
+without supporting evidence. The model must not recommend arbitrary retry
+increases or restart-policy changes as a substitute for diagnosis.
