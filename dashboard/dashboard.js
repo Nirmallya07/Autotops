@@ -121,6 +121,7 @@ async function loadAiAnalysis(incidentId) {
         const analysisHtml = `
             <div><b>AI status:</b> ${esc(analysis.status || "Not available")}</div>
             <div><b>Lifecycle:</b> ${esc(lifecycle.current_status || "Not recorded")}</div>
+            <div><b>AI engine:</b> ${esc(diagnosis.diagnoser || "Unknown")}${diagnosis.model ? " · Model: " + esc(diagnosis.model) : ""}</div>
             <div><b>Diagnosis:</b> ${esc(diagnosis.root_cause || diagnosis.summary || diagnosis.description || "Not available")}</div>
             <div><b>Recommended diagnostic action:</b> ${esc(diagnosis.recommended_action || "-")}</div>
             <div><b>Live health:</b> ${esc(health.status || "Not available")}</div>
