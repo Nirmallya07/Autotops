@@ -1,7 +1,7 @@
 from pathlib import Path
 from ai_work.ai_pipeline.incident_loader import IncidentLoader
 from ai_work.ai_pipeline.diagnoser.context import DiagnosticContext
-from ai_work.ai_pipeline.diagnoser.ollama import OllamaDiagnoser
+from ai_work.ai_pipeline.diagnoser.mock import MockDiagnoser
 from ai_work.ai_pipeline.diagnoser.validator import DiagnosisValidator
 from ai_work.ai_pipeline.fixer.proposal import RemediationProposal
 from ai_work.ai_pipeline.fixer.approval import ApprovalManager
@@ -23,7 +23,10 @@ def test_ai_pipeline():
     context = context_builder.build(incident)
 
     # 3. AI diagnosis using local Ollama
-    diagnoser = OllamaDiagnoser()
+    # diagnoser = OllamaDiagnoser()
+    # diagnosis = diagnoser.diagnose(context)
+    # 3. AI diagnosis using deterministic mock
+    diagnoser = MockDiagnoser()
     diagnosis = diagnoser.diagnose(context)
 
     print("\nAI Diagnosis:")
