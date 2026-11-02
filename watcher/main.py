@@ -52,7 +52,7 @@ def save_active_incidents(active, path=ACTIVE_STATE):
     tmp.replace(path)
 
 
-def emit(key, failure_type, severity, pod, status, metrics, active, events=None):
+def emit(key, failure_type, severity, pod, status, metrics, active, events=None, event_error=None):
     now = time.time()
     key_id = _key_id(key)
     last_emitted = active.get(key_id)
@@ -64,6 +64,14 @@ def emit(key, failure_type, severity, pod, status, metrics, active, events=None)
 
     name = pod.metadata.name
     event_collection = {"status": "collected"}
+    if event_error is not None:
+        event_collection = {
+            "status": "error",
+            "error": {
+                "type": type(event_error).__name__,
+                "message": str(event_error)[:500],
+            },
+        }
     if events is None:
         try:
             events = k8s.get_events(NAMESPACE, name)
@@ -141,11 +149,16 @@ def run_once():
         restarts = max([c["restart_count"] for c in containers] or [0])
         pod_uid = status.get("uid") or status.get("name")
 
-        events = k8s.get_events(NAMESPACE, status["name"])
+        event_error = None
+        try:
+            events = k8s.get_events(NAMESPACE, status["name"])
+        except Exception as error:
+            events = []
+            event_error = error
         sev = rules.check_crashloop(status, events)
         if sev:
             emit(("CrashLoopBackOff", pod_uid), "CrashLoopBackOff", sev,
-                 pod, status, {"restart_count": restarts}, active, events=events)
+                 pod, status, {"restart_count": restarts}, active, events=events, event_error=event_error)
 
         sev = rules.check_oom(status)
         if sev:
