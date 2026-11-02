@@ -35,6 +35,8 @@ def process_incident(
     diagnoser_name: str = "mock",
     health_checker=None,
     stability_monitor=None,
+    stability_window_seconds: float = 60,
+    stability_interval_seconds: float = 10,
 ) -> Dict[str, Any]:
     """Diagnose an incident and recommend remediation only when appropriate."""
     incident = IncidentLoader().load(incident_path)
@@ -56,7 +58,11 @@ def process_incident(
         monitor = (
             stability_monitor
             if stability_monitor is not None
-            else RecoveryStabilityMonitor(checker)
+            else RecoveryStabilityMonitor(
+                checker,
+                window_seconds=stability_window_seconds,
+                interval_seconds=stability_interval_seconds,
+            )
         )
         stability_check = monitor.monitor(incident, initial_result=health_check)
 
@@ -171,13 +177,30 @@ def main() -> int:
         help="Use deterministic mock diagnosis (default) or local Ollama diagnosis",
     )
     parser.add_argument(
+        "--stability-window-seconds",
+        type=float,
+        default=60,
+        help="How long the pod must remain healthy before recovery is verified (default: 60)",
+    )
+    parser.add_argument(
+        "--stability-interval-seconds",
+        type=float,
+        default=10,
+        help="Seconds between health observations during recovery verification (default: 10)",
+    )
+    parser.add_argument(
         "--output",
         help="Optional path to write the JSON result; prints to stdout when omitted",
     )
     args = parser.parse_args()
 
     try:
-        result = process_incident(args.incident, args.diagnoser)
+        result = process_incident(
+            args.incident,
+            args.diagnoser,
+            stability_window_seconds=args.stability_window_seconds,
+            stability_interval_seconds=args.stability_interval_seconds,
+        )
         rendered = json.dumps(result, indent=2, ensure_ascii=False)
         if args.output:
             output_path = Path(args.output)
