@@ -70,12 +70,22 @@ Return exactly one JSON object with these four fields:
   "recommended_action": "recommended next action"
 }}
 
-Requirements:
-- root_cause must be a plain string, not another JSON object.
-- evidence must be a list of strings.
-- confidence must be a number from 0 to 1.
+Diagnostic reasoning rules:
+- Distinguish observed facts from hypotheses. Never present a hypothesis as a confirmed cause.
+- CrashLoopBackOff is a Kubernetes symptom describing repeated container failures, not the underlying application root cause.
+- A non-zero exit code or last termination reason of Error confirms an unsuccessful termination, but does not by itself explain why it happened.
+- Use only the supplied logs, pod status, events, and metrics. Do not infer a specific code defect, configuration error, resource shortage, or dependency failure unless the evidence supports it.
+- If the supplied logs do not contain the application error, explicitly say that the exact root cause cannot yet be determined.
+- Recommend the most useful next diagnostic step. For CrashLoopBackOff, prioritize inspecting current and previous container logs and correlating them with termination details and recent events. Do not recommend increasing retry counts, changing restart policies, or restarting a pod as a substitute for identifying the cause unless the evidence specifically justifies that action.
+- Keep recommendations operational, specific, and proportional to the evidence.
+- Do not treat generic runtime or development-server warnings as the cause unless they are linked to the observed failure.
+
+Output requirements:
+- root_cause must be a plain string that clearly labels confirmed facts and, where needed, an unconfirmed hypothesis.
+- evidence must be a list of strings containing only facts present in the supplied incident.
+- confidence must be a number from 0 to 1 and reflect how strongly the evidence supports the stated root cause. Use lower confidence when the exact cause is unknown.
 - recommended_action must be a plain string.
-- Return no additional fields or surrounding text.
+- Return exactly the four requested fields, with no surrounding text.
 """
 
     def _decode_json(self, value):
