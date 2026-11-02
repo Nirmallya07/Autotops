@@ -49,6 +49,7 @@ def process_incident(
     stability_window_seconds: float = 60,
     stability_interval_seconds: float = 10,
     lifecycle_path: str = None,
+    ollama_model: str = "llama3.2:3b",
 ) -> Dict[str, Any]:
     """Diagnose an incident and recommend remediation only when appropriate."""
     incident = IncidentLoader().load(incident_path)
@@ -58,7 +59,7 @@ def process_incident(
     context = DiagnosticContext().build(incident)
 
     if diagnoser_name == "ollama":
-        diagnoser = OllamaDiagnoser()
+        diagnoser = OllamaDiagnoser(model=ollama_model)
     elif diagnoser_name == "mock":
         diagnoser = MockDiagnoser()
     else:
@@ -192,6 +193,11 @@ def main() -> int:
         help="Use deterministic mock diagnosis (default) or local Ollama diagnosis",
     )
     parser.add_argument(
+        "--ollama-model",
+        default="llama3.2:3b",
+        help="Local Ollama model to use when --diagnoser ollama is selected",
+    )
+    parser.add_argument(
         "--stability-window-seconds",
         type=float,
         default=60,
@@ -219,6 +225,7 @@ def main() -> int:
             args.diagnoser,
             stability_window_seconds=args.stability_window_seconds,
             stability_interval_seconds=args.stability_interval_seconds,
+            ollama_model=args.ollama_model,
             lifecycle_path=(str(Path(args.lifecycle_dir) / f"{Path(args.incident).stem}.json")
                             if args.lifecycle_dir else None),
         )
