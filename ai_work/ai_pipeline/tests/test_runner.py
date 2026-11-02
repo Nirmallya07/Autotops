@@ -17,6 +17,23 @@ class FakeHealthChecker:
             "incident_id": incident["incident_id"],
             "status": self.status,
             "reason": "Test health assessment",
+            "pod_uid": "pod-uid-1",
+            "identity_verified": True,
+        }
+
+
+class FakeStabilityMonitor:
+    def __init__(self, status):
+        self.status = status
+
+    def monitor(self, incident, initial_result=None):
+        return {
+            "incident_id": incident["incident_id"],
+            "status": self.status,
+            "reason": "Test stability assessment",
+            "window_seconds": 60,
+            "sample_count": 7,
+            "observations": [initial_result],
         }
 
 
@@ -38,9 +55,11 @@ def test_runner_skips_proposal_when_pod_is_healthy():
         str(SAMPLE_INCIDENT),
         diagnoser_name="mock",
         health_checker=FakeHealthChecker("HEALTHY_NOW"),
+        stability_monitor=FakeStabilityMonitor("RECOVERED"),
     )
 
-    assert result["status"] == "CURRENTLY_HEALTHY"
+    assert result["status"] == "RECOVERED"
+    assert result["stability_check"]["sample_count"] == 7
     assert result["proposal"] is None
     assert result["execution_performed"] is False
 
@@ -80,6 +99,33 @@ def test_runner_keeps_proposal_visible_when_health_is_unknown():
     assert result["status"] == "AWAITING_HUMAN_APPROVAL"
     assert result["proposal"]["approval_required"] is True
     assert "inconclusive" in result["message"]
+
+
+def test_runner_keeps_proposal_when_pod_fails_during_stability_window():
+    result = process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="mock",
+        health_checker=FakeHealthChecker("HEALTHY_NOW"),
+        stability_monitor=FakeStabilityMonitor("UNHEALTHY"),
+    )
+
+    assert result["status"] == "AWAITING_HUMAN_APPROVAL"
+    assert result["proposal"]["approval_required"] is True
+    assert result["stability_check"]["status"] == "UNHEALTHY"
+    assert result["execution_performed"] is False
+
+
+def test_runner_requires_review_when_stability_monitor_loses_identity():
+    result = process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="mock",
+        health_checker=FakeHealthChecker("HEALTHY_NOW"),
+        stability_monitor=FakeStabilityMonitor("NEEDS_REVIEW"),
+    )
+
+    assert result["status"] == "NEEDS_HEALTH_REVIEW"
+    assert result["proposal"] is None
+    assert result["execution_performed"] is False
 
 
 def test_runner_rejects_unknown_diagnoser():
