@@ -26,3 +26,28 @@ The dashboard intentionally reuses the tested demo workflow instead of creating 
 `scripts/member2_incidents/analysis/` and lifecycle history under
 `scripts/member2_incidents/lifecycle/`. The dashboard reads these files through
 `/api/incidents/<incident-id>`; it does not run the AI pipeline itself.
+
+
+## Select the AI diagnoser
+
+The dashboard starts the existing demo script, which runs the AI pipeline after
+an incident is created and validated. The demo script inherits the environment
+of the dashboard process, so choose the diagnoser when starting the dashboard.
+
+To use the local Ollama model Qwen 2.5 3B:
+
+```bash
+AI_DIAGNOSER=ollama AI_OLLAMA_MODEL=qwen2.5:3b ./scripts/start_dashboard.sh
+```
+
+To use the deterministic mock diagnoser instead:
+
+```bash
+AI_DIAGNOSER=mock ./scripts/start_dashboard.sh
+```
+
+If `AI_DIAGNOSER` is omitted, the demo script retains its existing `mock`
+default. Ollama must be running locally and the selected model must already be
+available to Ollama. The model only generates the diagnosis; health checks,
+stability verification, approval requirements, and the no-automatic-execution
+boundary remain unchanged.
