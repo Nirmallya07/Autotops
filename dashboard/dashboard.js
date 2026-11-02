@@ -64,6 +64,44 @@ function esc(v) {
 }
 
 
+async function loadAiAnalysis(incidentId) {
+    const target = document.getElementById("ai-analysis-" + incidentId);
+    if (!target) return;
+    target.textContent = "Loading AI assessment...";
+
+    try {
+        const response = await fetch("/api/incidents/" + encodeURIComponent(incidentId), {
+            cache: "no-store"
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            target.textContent = data.message || "AI assessment is not available yet.";
+            return;
+        }
+
+        const analysis = data.analysis || {};
+        const lifecycle = data.lifecycle || {};
+        const diagnosis = analysis.diagnosis || {};
+        const health = analysis.health_check || {};
+        const proposal = analysis.proposal;
+        const actions = proposal?.actions || proposal?.steps || [];
+
+        target.innerHTML = `
+            <div><b>AI status:</b> ${esc(analysis.status || "Not available")}</div>
+            <div><b>Lifecycle:</b> ${esc(lifecycle.current_status || "Not recorded")}</div>
+            <div><b>Diagnosis:</b> ${esc(diagnosis.summary || diagnosis.description || diagnosis.root_cause || "See full analysis JSON")}</div>
+            <div><b>Live health:</b> ${esc(health.status || "Not available")}</div>
+            <div><b>Health reason:</b> ${esc(health.reason || "-")}</div>
+            <div><b>Human approval:</b> ${proposal ? "Required before remediation" : "No remediation proposal generated"}</div>
+            ${actions.length ? `<div><b>Proposed actions:</b><ul>${actions.map(action => `<li>${esc(typeof action === "string" ? action : (action.description || action.action || JSON.stringify(action)))}</li>`).join("")}</ul></div>` : ""}
+            <div class="muted">Execution performed: ${analysis.execution_performed ? "Yes" : "No"}</div>
+        `;
+    } catch (error) {
+        target.textContent = "Could not load AI assessment: " + error;
+    }
+}
+
+
 function render(d) {
     let c = d.cluster || {};
     let p = (c.pods || [])[0];
@@ -178,6 +216,17 @@ function render(d) {
                     Reason: ${esc(i.reason || "-")}
                     · Exit: ${i.exit_code ?? "-"}
                 </div>
+
+                <div class="meta">
+                    AI: ${esc(i.ai_status || "Not run")}
+                    · Lifecycle: ${esc(i.lifecycle_status || "Not recorded")}
+                </div>
+
+                <button class="secondary-button" onclick="loadAiAnalysis('${esc(i.incident_id)}')"
+                    ${i.analysis_available ? "" : "disabled"}>
+                    View AI Analysis
+                </button>
+                <div class="ai-analysis" id="ai-analysis-${esc(i.incident_id)}"></div>
             </div>
         `).join("")
         : "No incidents yet.";
