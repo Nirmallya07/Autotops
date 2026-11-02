@@ -1,5 +1,5 @@
 function setBusy(b) {
-    document.querySelectorAll("button").forEach(button => {
+    document.querySelectorAll(".actions button").forEach(button => {
         button.disabled = b;
     });
 }
