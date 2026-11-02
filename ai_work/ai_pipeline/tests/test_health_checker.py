@@ -123,3 +123,14 @@ def test_reports_unknown_when_incident_has_no_pod_identity():
 
     assert result["status"] == UNKNOWN
     get_client.assert_not_called()
+
+def test_does_not_claim_recovery_when_incident_pod_uid_is_missing():
+    api = FakeApi(make_pod(ready=True))
+
+    result = KubernetesHealthChecker(api=api).assess(
+        make_incident(uid=None)
+    )
+
+    assert result["status"] == UNKNOWN
+    assert result["identity_verified"] is False
+
