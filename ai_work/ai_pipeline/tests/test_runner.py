@@ -211,3 +211,5 @@ def test_runner_passes_selected_model_to_ollama(monkeypatch):
 
     assert captured["model"] == "qwen2.5:3b"
     assert result["diagnosis"]["root_cause"] == "Test diagnosis from selected Ollama model."
+    assert result["diagnosis"]["diagnoser"] == "ollama"
+    assert result["diagnosis"]["model"] == "qwen2.5:3b"
