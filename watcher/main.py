@@ -54,7 +54,7 @@ def emit(key, failure_type, severity, pod, status, metrics, active):
         "pod_status": status,
         "kubernetes_events": k8s.get_events(NAMESPACE, name),
         "metrics": metrics,
-        "logs": k8s.get_logs(NAMESPACE, name),
+        **k8s.get_log_evidence(NAMESPACE, name),
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     incident = create_incident(next_incident_id(OUT_DIR), SERVICE, NAMESPACE,
