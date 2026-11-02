@@ -96,8 +96,12 @@ Diagnostic reasoning rules:
 - Distinguish observed facts from hypotheses. Never present a hypothesis as a confirmed cause.
 - CrashLoopBackOff is a Kubernetes symptom describing repeated container failures, not the underlying application root cause.
 - A non-zero exit code or last termination reason of Error confirms an unsuccessful termination, but does not by itself explain why it happened.
+- Examine application log messages for explicit descriptions of the action or error immediately associated with termination before relying on generic Kubernetes status fields.
+- Evidence priority: (1) explicit application error or termination messages, (2) surrounding previous-container logs, (3) current-container logs, (4) Kubernetes events and termination details, (5) metrics and generic runtime messages.
+- When an application log explicitly identifies the action that terminated the process, state that action as the evidence-supported cause. Do not replace it with the less-informative statement that the container merely exited with an error.
+- Treat startup messages, routine informational output, and generic runtime warnings as context, not causal evidence, unless the supplied evidence directly connects them to the failure.
 - Use only the supplied logs, pod status, events, and metrics. Do not infer a specific code defect, configuration error, resource shortage, or dependency failure unless the evidence supports it.
-- If the supplied logs do not contain the application error, explicitly say that the exact root cause cannot yet be determined.
+- If no application log or other evidence identifies the underlying cause, explicitly say that the exact root cause cannot yet be determined; state the observed termination separately.
 - Recommend the most useful next diagnostic step. For CrashLoopBackOff, prioritize inspecting current and previous container logs and correlating them with termination details and recent events. Do not recommend increasing retry counts, changing restart policies, or restarting a pod as a substitute for identifying the cause unless the evidence specifically justifies that action.
 - Keep recommendations operational, specific, and proportional to the evidence.
 - Do not treat generic runtime or development-server warnings as the cause unless they are linked to the observed failure.
