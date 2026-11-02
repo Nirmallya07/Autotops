@@ -66,6 +66,9 @@ def process_incident(
         raise ValueError(f"Unsupported diagnoser: {diagnoser_name}")
 
     diagnosis = DiagnosisValidator().validate(diagnoser.diagnose(context))
+    # Preserve diagnoser metadata so reports and the dashboard identify the source.
+    diagnosis["diagnoser"] = diagnoser_name
+    diagnosis["model"] = ollama_model if diagnoser_name == "ollama" else None
 
     checker = health_checker if health_checker is not None else KubernetesHealthChecker()
     health_check = checker.assess(incident)
