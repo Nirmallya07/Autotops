@@ -145,3 +145,40 @@ def test_runner_rejects_missing_incident_file(tmp_path):
         pass
     else:
         raise AssertionError("Missing incident should be rejected")
+
+
+
+def test_runner_persists_recovered_lifecycle_without_modifying_incident(tmp_path):
+    lifecycle_path = tmp_path / "lifecycle" / "INC-003.json"
+    original = SAMPLE_INCIDENT.read_text(encoding="utf-8")
+
+    result = process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="mock",
+        health_checker=FakeHealthChecker("HEALTHY_NOW"),
+        stability_monitor=FakeStabilityMonitor("RECOVERED"),
+        lifecycle_path=str(lifecycle_path),
+    )
+
+    lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
+    assert result["status"] == "RECOVERED"
+    assert lifecycle["current_status"] == "RECOVERED"
+    assert [event["status"] for event in lifecycle["events"]] == [
+        "OPEN", "INVESTIGATING", "RECOVERED"
+    ]
+    assert SAMPLE_INCIDENT.read_text(encoding="utf-8") == original
+
+
+def test_runner_persists_approval_required_lifecycle(tmp_path):
+    lifecycle_path = tmp_path / "lifecycle" / "INC-003.json"
+
+    result = process_incident(
+        str(SAMPLE_INCIDENT),
+        diagnoser_name="mock",
+        health_checker=FakeHealthChecker("UNKNOWN"),
+        lifecycle_path=str(lifecycle_path),
+    )
+
+    lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
+    assert result["status"] == "AWAITING_HUMAN_APPROVAL"
+    assert lifecycle["current_status"] == "AWAITING_HUMAN_APPROVAL"
