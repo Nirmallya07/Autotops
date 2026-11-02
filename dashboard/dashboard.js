@@ -6,6 +6,33 @@ function setBusy(b) {
 
 // Keep expanded AI assessments available when the live dashboard re-renders.
 const aiAnalysisCache = new Map();
+const expandedAiPanels = new Set();
+const loadedAiAnalyses = new Set();
+
+function toggleAiAnalysis(incidentId) {
+    const panel = document.getElementById("ai-analysis-" + incidentId);
+    if (!panel) return;
+    const button = document.querySelector('[data-ai-toggle="' + CSS.escape(incidentId) + '"]');
+
+    if (expandedAiPanels.has(incidentId)) {
+        expandedAiPanels.delete(incidentId);
+        panel.hidden = true;
+        if (button) button.textContent = "View AI Analysis";
+        return;
+    }
+
+    expandedAiPanels.add(incidentId);
+    panel.hidden = false;
+    if (button) button.textContent = "Hide AI Analysis";
+
+    if (loadedAiAnalyses.has(incidentId)) {
+        const cached = aiAnalysisCache.get(incidentId) || "";
+        if (cached.startsWith("Could not load")) panel.textContent = cached;
+        else panel.innerHTML = cached;
+    } else {
+        loadAiAnalysis(incidentId);
+    }
+}
 
 
 async function runDemo(kind) {
@@ -105,13 +132,19 @@ async function loadAiAnalysis(incidentId) {
             <div class="muted">Execution performed: ${analysis.execution_performed ? "Yes" : "No"}</div>
         `;
         aiAnalysisCache.set(incidentId, analysisHtml);
+        loadedAiAnalyses.add(incidentId);
         const currentTarget = document.getElementById("ai-analysis-" + incidentId);
-        if (currentTarget) currentTarget.innerHTML = analysisHtml;
+        if (currentTarget && expandedAiPanels.has(incidentId)) {
+            currentTarget.innerHTML = analysisHtml;
+        }
     } catch (error) {
         const errorMessage = "Could not load AI assessment: " + error;
         aiAnalysisCache.set(incidentId, errorMessage);
+        loadedAiAnalyses.add(incidentId);
         const currentTarget = document.getElementById("ai-analysis-" + incidentId);
-        if (currentTarget) currentTarget.textContent = errorMessage;
+        if (currentTarget && expandedAiPanels.has(incidentId)) {
+            currentTarget.textContent = errorMessage;
+        }
     }
 }
 
@@ -236,11 +269,13 @@ function render(d) {
                     · Lifecycle: ${esc(i.lifecycle_status || "Not recorded")}
                 </div>
 
-                <button class="secondary-button" onclick="loadAiAnalysis('${esc(i.incident_id)}')"
+                <button class="secondary-button" data-ai-toggle="${esc(i.incident_id)}"
+                    onclick="toggleAiAnalysis('${esc(i.incident_id)}')"
                     ${i.analysis_available ? "" : "disabled"}>
-                    View AI Analysis
+                    ${expandedAiPanels.has(i.incident_id) ? "Hide AI Analysis" : "View AI Analysis"}
                 </button>
-                <div class="ai-analysis" id="ai-analysis-${esc(i.incident_id)}"></div>
+                <div class="ai-analysis" id="ai-analysis-${esc(i.incident_id)}"
+                    ${expandedAiPanels.has(i.incident_id) ? "" : "hidden"}></div>
             </div>
         `).join("")
         : "No incidents yet.";
@@ -248,7 +283,8 @@ function render(d) {
     // Restore expanded AI panels after each live incident-list update.
     for (const [incidentId, html] of aiAnalysisCache) {
         const panel = document.getElementById("ai-analysis-" + incidentId);
-        if (panel) {
+        if (panel && expandedAiPanels.has(incidentId)) {
+            panel.hidden = false;
             if (html.startsWith("Could not load") || html === "Loading AI assessment...") {
                 panel.textContent = html;
             } else {
