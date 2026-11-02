@@ -38,13 +38,33 @@ class OllamaDiagnoser(Diagnoser):
         return self._parse_response(incident, model_output)
 
     def _build_prompt(self, context):
+        # Prefer the separated log streams. The legacy combined "logs"
+        # field often contains the same entries and would duplicate evidence.
+        current_logs = context.get("current_logs")
+        previous_logs = context.get("previous_logs")
+
+        if current_logs is None:
+            current_logs = context.get("logs", [])
+
+        # Remove repeated lines while preserving their original order.
+        def unique_lines(lines):
+            if not isinstance(lines, list):
+                return []
+            seen = set()
+            result = []
+            for line in lines:
+                key = str(line).strip()
+                if key and key not in seen:
+                    seen.add(key)
+                    result.append(line)
+            return result
+
         evidence = {
             "pod_status": context.get("pod_status", {}),
             "kubernetes_events": context.get("kubernetes_events", []),
             "metrics": context.get("metrics", {}),
-            "logs": context.get("logs", []),
-            "current_logs": context.get("current_logs", context.get("logs", [])),
-            "previous_logs": context.get("previous_logs", []),
+            "current_logs": unique_lines(current_logs),
+            "previous_logs": unique_lines(previous_logs),
         }
 
         return f"""
@@ -81,6 +101,8 @@ Diagnostic reasoning rules:
 - Recommend the most useful next diagnostic step. For CrashLoopBackOff, prioritize inspecting current and previous container logs and correlating them with termination details and recent events. Do not recommend increasing retry counts, changing restart policies, or restarting a pod as a substitute for identifying the cause unless the evidence specifically justifies that action.
 - Keep recommendations operational, specific, and proportional to the evidence.
 - Do not treat generic runtime or development-server warnings as the cause unless they are linked to the observed failure.
+- Prefer specific error messages that directly explain the failure; do not cite unrelated startup messages or generic warnings as supporting evidence.
+- Do not repeat the same evidence item more than once in the evidence list.
 
 Output requirements:
 - root_cause must be a plain string that clearly labels confirmed facts and, where needed, an unconfirmed hypothesis.
