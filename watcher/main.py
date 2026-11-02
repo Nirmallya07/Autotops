@@ -19,6 +19,17 @@ def _key_id(key):
     return json.dumps(key, separators=(",", ":"), sort_keys=True)
 
 
+def _suppression_window(key_id):
+    """Keep an OOM signature suppressed for at least its detection freshness window."""
+    try:
+        key = json.loads(key_id)
+    except (TypeError, ValueError):
+        return COOLDOWN
+    if isinstance(key, list) and key and key[0] == "OOMKilled":
+        return max(COOLDOWN, rules.OOM_FRESHNESS_SECONDS)
+    return COOLDOWN
+
+
 def load_active_incidents(path=ACTIVE_STATE):
     try:
         data = json.loads(path.read_text())
@@ -45,8 +56,10 @@ def emit(key, failure_type, severity, pod, status, metrics, active):
     now = time.time()
     key_id = _key_id(key)
     last_emitted = active.get(key_id)
-    if last_emitted is not None and now - last_emitted < COOLDOWN:
-        print(f"[WATCHER] duplicate suppressed ({int(COOLDOWN - (now - last_emitted))}s cooldown): {failure_type} pod={status.get('name')}", flush=True)
+    window = _suppression_window(key_id)
+    if last_emitted is not None and now - last_emitted < window:
+        remaining = int(window - (now - last_emitted))
+        print(f"[WATCHER] duplicate suppressed ({remaining}s cooldown): {failure_type} pod={status.get('name')}", flush=True)
         return False
 
     name = pod.metadata.name
@@ -81,7 +94,7 @@ def run_once():
     active = load_active_incidents()
     now = time.time()
     # Expire old suppression records so a later recurrence is not blocked forever.
-    active = {key: ts for key, ts in active.items() if now - ts < COOLDOWN}
+    active = {key: ts for key, ts in active.items() if now - ts < _suppression_window(key)}
 
     for pod in pods:
         status = k8s.pod_status(pod)
