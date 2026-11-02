@@ -97,9 +97,12 @@ def process_incident(
         if stability_check["status"] in {UNKNOWN, "UNHEALTHY"}:
             # Surface the latest observation rather than leaving the initial
             # healthy snapshot as the apparent current state.
+            latest_observation = (
+                stability_check.get("observations") or [{}]
+            )[-1]
             health_check = (
-                stability_check["observations"][-1]
-                if stability_check.get("observations")
+                latest_observation
+                if latest_observation.get("status") == stability_check["status"]
                 else {
                     **health_check,
                     "status": stability_check["status"],
