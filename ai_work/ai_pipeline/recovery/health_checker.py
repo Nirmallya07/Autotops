@@ -38,9 +38,10 @@ class KubernetesHealthChecker:
                 pod_name=pod_name,
             )
 
-        api = self.api or get_kubernetes_client()
-
         try:
+            # Client setup can fail when kubeconfig or cluster access is absent.
+            # Treat that as UNKNOWN rather than crashing incident processing.
+            api = self.api if self.api is not None else get_kubernetes_client()
             pod = api.read_namespaced_pod(name=pod_name, namespace=namespace)
         except ApiException as exc:
             if exc.status == 404:
