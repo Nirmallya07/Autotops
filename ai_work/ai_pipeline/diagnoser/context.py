@@ -26,4 +26,5 @@ class DiagnosticContext:
             "current_logs": evidence.get("current_logs", evidence.get("logs", [])),
             "previous_logs": evidence.get("previous_logs", []),
             "log_collection": evidence.get("log_collection", {}),
+            "event_collection": evidence.get("event_collection", {}),
         }
