@@ -50,6 +50,7 @@
             "type": "string",
             "enum": [
                 "restart",
+                "restart_pod",
                 "scale",
                 "rollback",
                 "investigate"
