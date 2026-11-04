@@ -9,7 +9,7 @@ class RemediationExecutor:
     use a separately reviewed, least-privilege infrastructure adapter.
     """
 
-    ALLOWED_ACTIONS = {"investigate", "restart", "scale", "rollback"}
+    ALLOWED_ACTIONS = {"investigate", "restart", "restart_pod", "scale", "rollback"}
     ALLOWED_RISKS = {"LOW", "MEDIUM", "HIGH"}
 
     def execute(self, handoff: Dict[str, Any]) -> Dict[str, Any]:
