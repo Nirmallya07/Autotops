@@ -73,7 +73,11 @@
             "enum": [
                 "PROPOSED",
                 "APPROVED",
-                "REJECTED"
+                "REJECTED",
+                "AUTO_APPROVED",
+                "HUMAN_APPROVAL",
+                "NO_EXECUTION",
+                "ESCALATE"
             ]
         },
         "execution_status": {
@@ -83,7 +87,13 @@
                 "READY_FOR_EXECUTION",
                 "SUCCESS",
                 "FAILED",
-                "UNKNOWN"
+                "UNKNOWN",
+                "DRY_RUN",
+                "AUTO_APPROVED",
+                "HUMAN_APPROVAL",
+                "NO_EXECUTION",
+                "ESCALATE",
+                "NOT_ATTEMPTED"
             ]
         },
         "recovery_status": {
@@ -92,6 +102,7 @@
                 "RECOVERED",
                 "NOT_RECOVERED",
                 "ESCALATED",
+                "NOT_ATTEMPTED",
                 "UNKNOWN"
             ]
         }
