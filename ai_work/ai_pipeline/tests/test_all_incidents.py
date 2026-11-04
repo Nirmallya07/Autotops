@@ -11,7 +11,7 @@ EXAMPLES = [
     (
         str(Path(__file__).resolve().parents[2] / "examples" / "incident-CrashLoopBackOff.json"),
         "CrashLoopBackOff",
-        "restart",
+        "restart_pod",
     ),
     (
         str(Path(__file__).resolve().parents[2] / "examples" / "incident-HighHTTP5xxRate.json"),
