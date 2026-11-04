@@ -30,6 +30,7 @@ def process(incident_path, diagnoser_name="mock", model="qwen2.5:3b",
     memory = IncidentMemory(memory_path)
     historical = memory.retrieve(incident)
     context["historical_incidents"] = historical
+    context["auto_remediation_attempts"] = memory.get_auto_attempts(incident["incident_id"])
     if diagnoser_name == "ollama":
         diagnoser = OllamaDiagnoser(model=model)
     elif diagnoser_name == "mock":
@@ -42,6 +43,8 @@ def process(incident_path, diagnoser_name="mock", model="qwen2.5:3b",
     policy = RemediationPolicy(auto_actions=set(auto_actions), max_auto_attempts=1)
     orchestrator = RemediationOrchestrator(policy=policy, executor=executor)
     execution = orchestrator.run(proposal, context)
+    if execution.get("decision") == "AUTO_APPROVE":
+        memory.record_auto_attempt(incident["incident_id"])
     recovery = {"status": "NOT_ATTEMPTED", "reason": "No infrastructure action was authorized."}
     if execution.get("status") == "SUCCESS" and execution.get("execution_performed"):
         old_uid = (context.get("pod_status") or {}).get("uid")
