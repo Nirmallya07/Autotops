@@ -22,6 +22,8 @@ class IncidentMemory:
                 root_cause TEXT, evidence TEXT, remediation TEXT, outcome TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
             db.execute("CREATE INDEX IF NOT EXISTS idx_memory_type ON incidents(failure_type)")
+            db.execute("""CREATE TABLE IF NOT EXISTS remediation_attempts (
+                incident_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0)""")
 
     def _connect(self):
         db = sqlite3.connect(str(self.path), timeout=10)
@@ -52,6 +54,23 @@ class IncidentMemory:
                 service=excluded.service, failure_type=excluded.failure_type,
                 root_cause=excluded.root_cause, evidence=excluded.evidence,
                 remediation=excluded.remediation, outcome=excluded.outcome""", values)
+
+    def get_auto_attempts(self, incident_id: str) -> int:
+        with self._connect() as db:
+            row = db.execute("SELECT attempts FROM remediation_attempts WHERE incident_id=?",
+                             (incident_id,)).fetchone()
+        return int(row["attempts"]) if row else 0
+
+    def record_auto_attempt(self, incident_id: str) -> int:
+        if not isinstance(incident_id, str) or not incident_id:
+            raise ValueError("incident_id is required")
+        with self._connect() as db:
+            db.execute("""INSERT INTO remediation_attempts (incident_id, attempts)
+                VALUES (?, 1) ON CONFLICT(incident_id) DO UPDATE SET
+                attempts=attempts+1""", (incident_id,))
+            row = db.execute("SELECT attempts FROM remediation_attempts WHERE incident_id=?",
+                             (incident_id,)).fetchone()
+        return int(row["attempts"]) if row else 0
 
     def retrieve(self, incident: Dict[str, Any], limit=3) -> List[Dict[str, Any]]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10:
