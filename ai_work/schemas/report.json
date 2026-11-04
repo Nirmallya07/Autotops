@@ -77,6 +77,10 @@
                 "AUTO_APPROVED",
                 "HUMAN_APPROVAL",
                 "NO_EXECUTION",
+                "ESCALATE",
+                "AUTO_APPROVED",
+                "HUMAN_APPROVAL",
+                "NO_EXECUTION",
                 "ESCALATE"
             ]
         },
@@ -103,7 +107,13 @@
                 "NOT_RECOVERED",
                 "ESCALATED",
                 "NOT_ATTEMPTED",
-                "UNKNOWN"
+                "UNKNOWN",
+                "DRY_RUN",
+                "AUTO_APPROVED",
+                "HUMAN_APPROVAL",
+                "NO_EXECUTION",
+                "ESCALATE",
+                "NOT_ATTEMPTED"
             ]
         }
     },
