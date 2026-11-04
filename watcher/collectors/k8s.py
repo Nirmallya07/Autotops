@@ -60,7 +60,7 @@ def pod_status(pod):
     return {
         "name": pod.metadata.name,
         "uid": pod.metadata.uid,
-        "namespace": pod.metadata.namespace,
+        "namespace": getattr(pod.metadata, "namespace", None),
         "owner_kind": owner.kind if owner else None,
         "owner_name": owner.name if owner else None,
         "phase": pod.status.phase,
