@@ -55,9 +55,14 @@ def pod_status(pod):
                 "last_exit_code": last.exit_code if last else None,
                 "last_terminated_at": last.finished_at.isoformat() if last and last.finished_at else None,
             })
+    owners = getattr(pod.metadata, "owner_references", None) or []
+    owner = owners[0] if owners else None
     return {
         "name": pod.metadata.name,
         "uid": pod.metadata.uid,
+        "namespace": pod.metadata.namespace,
+        "owner_kind": owner.kind if owner else None,
+        "owner_name": owner.name if owner else None,
         "phase": pod.status.phase,
         "containers": containers,
     }
