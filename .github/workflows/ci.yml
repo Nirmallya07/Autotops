@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, frontend ]
+    branches: [ main, master, frontend, feature/v3-self-healing ]
   pull_request:
     branches: [ main, master, frontend ]
 
