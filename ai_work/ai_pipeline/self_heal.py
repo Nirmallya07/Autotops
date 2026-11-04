@@ -19,6 +19,7 @@ from ai_work.ai_pipeline.fixer.orchestrator import RemediationOrchestrator
 from ai_work.ai_pipeline.recovery.workload_verifier import DeploymentRecoveryVerifier
 from ai_work.ai_pipeline.memory.incident_store import IncidentMemory
 from ai_work.ai_pipeline.agents.reporter_agent import ReporterAgent
+from ai_work.ai_pipeline.recovery.incident_lifecycle import IncidentLifecycle
 
 
 def process(incident_path, diagnoser_name="mock", model="qwen2.5:3b",
@@ -67,6 +68,17 @@ def process(incident_path, diagnoser_name="mock", model="qwen2.5:3b",
                    ("AWAITING_HUMAN_APPROVAL" if execution.get("approval_required") else execution.get("status"))),
         "execution_performed": bool(execution.get("execution_performed")),
     }
+    lifecycle_path = Path(report_dir) / "lifecycle" / f"{incident['incident_id']}.json"
+    lifecycle = IncidentLifecycle(lifecycle_path)
+    lifecycle.start_processing(incident["incident_id"])
+    lifecycle_outcome = result["status"]
+    if lifecycle_outcome not in {"AWAITING_HUMAN_APPROVAL", "NEEDS_HEALTH_REVIEW", "RECOVERED", "ESCALATED"}:
+        lifecycle_outcome = "ESCALATED"
+    lifecycle.record_outcome(incident["incident_id"], lifecycle_outcome, {
+        "message": recovery.get("reason") or execution.get("reason") or execution.get("message"),
+        "execution": execution, "recovery": recovery,
+    })
+    result["lifecycle"] = lifecycle.read(incident["incident_id"])
     ReporterAgent(report_dir).run(incident, diagnosis, proposal, approval, execution, recovery)
     return result
 
