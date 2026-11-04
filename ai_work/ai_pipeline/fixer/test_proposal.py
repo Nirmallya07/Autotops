@@ -30,7 +30,7 @@ def test_crashloop_proposal():
     proposal = fixer.create(incident, diagnosis)
 
     assert proposal["incident_id"] == "INC-TEST-001"
-    assert proposal["action"] == "restart"
+    assert proposal["action"] == "restart_pod"
     assert proposal["target"] == "demo-api"
     assert proposal["approval_required"] is True
     assert proposal["status"] == "PROPOSED"
