@@ -39,7 +39,9 @@ class DeploymentRecoveryVerifier:
                          and all(c.ready for c in (p.status.container_statuses or []))
                          and not p.metadata.deletion_timestamp]
                 replacement = [p for p in ready if p.metadata.uid != old_pod_uid]
-                good = (deployment.status.observed_generation >= deployment.metadata.generation
+                observed = getattr(deployment.status, "observed_generation", 0) or 0
+                generation = getattr(deployment.metadata, "generation", 0) or 0
+                good = (observed >= generation and bool(ready)
                         and len(ready) >= desired and bool(replacement))
                 observations.append({
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -62,7 +64,8 @@ class DeploymentRecoveryVerifier:
             pods = core.list_namespaced_pod(namespace, label_selector=selector_text).items
             desired = deployment.spec.replicas or 0
             healthy = [p for p in pods if p.status.phase == "Running"
-                       and all(c.ready for c in (p.status.container_statuses or []))
+                       and bool(p.status.container_statuses)
+                       and all(c.ready for c in p.status.container_statuses)
                        and not p.metadata.deletion_timestamp]
             good = len(healthy) >= desired and all(p.metadata.uid != old_pod_uid for p in healthy)
             observations.append({"timestamp": datetime.now(timezone.utc).isoformat(),
