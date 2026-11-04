@@ -67,6 +67,7 @@ class OllamaDiagnoser(Diagnoser):
             "previous_logs": unique_lines(previous_logs),
             "log_collection": context.get("log_collection", {}),
             "event_collection": context.get("event_collection", {}),
+            "historical_incidents": context.get("historical_incidents", []),
         }
 
         return f"""
@@ -103,7 +104,8 @@ Diagnostic reasoning rules:
 - Evidence priority: (1) explicit application error or termination messages, (2) surrounding previous-container logs, (3) current-container logs, (4) Kubernetes events and termination details, (5) metrics and generic runtime messages.
 - When an application log explicitly identifies the action that terminated the process, state that action as the evidence-supported cause. Do not replace it with the less-informative statement that the container merely exited with an error.
 - Treat startup messages, routine informational output, and generic runtime warnings as context, not causal evidence, unless the supplied evidence directly connects them to the failure.
-- Use only the supplied logs, pod status, events, metrics, and collection metadata. Do not infer a specific code defect, configuration error, resource shortage, or dependency failure unless the evidence supports it.
+- Historical incidents are advisory context only. Never copy a prior root cause or remediation as fact; require current incident evidence to support the diagnosis.
+- Use only the supplied logs, pod status, events, metrics, collection metadata, and clearly labeled historical context. Do not infer a specific code defect, configuration error, resource shortage, or dependency failure unless the evidence supports it.
 - Treat log_collection and event_collection statuses and error messages only as collection diagnostics. Never cite a Kubernetes API error, missing previous-log stream, permission problem, or empty log response as the application root cause.
 - If a log stream or event collection has status "error" or "unavailable", explicitly account for that evidence gap when choosing confidence and the recommended next diagnostic step. Do not describe a failed collection request as proof that the application produced no logs or events.
 - If no application log or other evidence identifies the underlying cause, explicitly say that the exact root cause cannot yet be determined; state the observed termination separately.
