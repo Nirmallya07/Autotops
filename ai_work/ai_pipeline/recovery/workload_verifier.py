@@ -36,7 +36,8 @@ class DeploymentRecoveryVerifier:
                 pods = core.list_namespaced_pod(namespace, label_selector=selector_text).items
                 desired = deployment.spec.replicas or 0
                 ready = [p for p in pods if p.status.phase == "Running"
-                         and all(c.ready for c in (p.status.container_statuses or []))
+                         and bool(p.status.container_statuses)
+                         and all(c.ready for c in p.status.container_statuses)
                          and not p.metadata.deletion_timestamp]
                 replacement = [p for p in ready if p.metadata.uid != old_pod_uid]
                 observed = getattr(deployment.status, "observed_generation", 0) or 0
