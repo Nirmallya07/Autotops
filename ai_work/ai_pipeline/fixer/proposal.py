@@ -48,7 +48,7 @@ class RemediationProposal:
             evidence_refs.append("metrics")
 
         if failure_type == "CrashLoopBackOff":
-            action = "restart"
+            action = "restart_pod"
             reason = diagnosis.get(
                 "root_cause",
                 "The application pod is repeatedly crashing.",
