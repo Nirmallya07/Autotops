@@ -12,9 +12,12 @@ class DiagnosisValidator:
         re.compile(r"running on (all addresses|http://|https://)", re.I),
         re.compile(r"press ctrl\+c to quit", re.I),
     )
+    # Treat underscores as separators in structured application markers, e.g.
+    # AUTOTOPS_V3_CONTROLLED_CRASH. Python's \b considers "_" a word char.
     _FAILURE_LOG_PATTERN = re.compile(
-        r"\b(error|exception|traceback|fatal|failed|failure|oomkilled|"
-        r"out of memory|killed|terminat(?:ed|ing)|crash(?:ed)?)\b", re.I,
+        r"(?<![A-Za-z0-9])(?:error|exception|traceback|fatal|failed|failure|"
+        r"oomkilled|out of memory|killed|terminat(?:ed|ing)|crash(?:ed)?)"
+        r"(?![A-Za-z0-9])", re.I,
     )
     _UNSUPPORTED_CAUSE_PATTERN = re.compile(
         r"\b(caused by|due to|because of|encountered an error|"
