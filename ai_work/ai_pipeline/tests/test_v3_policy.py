@@ -30,7 +30,7 @@ def test_policy_requires_controller_managed_pod():
 def test_policy_enforces_attempt_cap():
     decision = RemediationPolicy(auto_actions={"restart_pod"}, max_auto_attempts=1).evaluate(
         proposal(), {"pod_status":{"name":"p","uid":"u","owner_kind":"ReplicaSet"},
-                     "auto_remediation_attempts":1})
+                     "deployment_name":"demo", "auto_remediation_attempts":1})
     assert decision.decision == "ESCALATE"
 
 
