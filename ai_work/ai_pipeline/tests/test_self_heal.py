@@ -20,7 +20,8 @@ def test_v3_defaults_to_no_execution_and_generates_report(tmp_path, monkeypatch)
     result=process(str(path), memory_path=str(tmp_path/"memory.db"),
                    report_dir=str(tmp_path/"reports"), executor=NeverExecute())
     assert result["execution_performed"] is False
-    assert result["status"] == "AWAITING_HUMAN_APPROVAL"
+    assert result["proposal"]["action"] == "investigate"
+    assert result["status"] == "NO_EXECUTION"
     assert result["proposal"]["action"] == "restart_pod"
     assert (tmp_path/"reports"/"INC-V3-1.json").exists()
     assert (tmp_path/"reports"/"INC-V3-1.txt").exists()
