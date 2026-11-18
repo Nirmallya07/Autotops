@@ -8,6 +8,8 @@ import argparse
 import json
 from pathlib import Path
 
+from kubernetes.client.exceptions import ApiException
+
 from ai_work.ai_pipeline.incident_loader import IncidentLoader
 from ai_work.ai_pipeline.diagnoser.context import DiagnosticContext
 from ai_work.ai_pipeline.diagnoser.mock import MockDiagnoser
@@ -40,16 +42,35 @@ def process(incident_path, diagnoser_name="mock", model="qwen2.5:3b",
     diagnosis = DiagnosisValidator().validate(diagnoser.diagnose(context), context)
     diagnosis.update({"diagnoser": diagnoser_name, "model": model if diagnoser_name == "ollama" else None})
     proposal = RemediationProposal().create(incident, diagnosis)
+
     policy = RemediationPolicy(auto_actions=set(auto_actions), max_auto_attempts=1)
+    recovery_verifier = verifier or DeploymentRecoveryVerifier()
+    # Resolve the controller before deleting the pod. A Pod's immediate owner
+    # is normally a ReplicaSet; the verifier follows that owner to its Deployment.
+    # If ownership cannot be established, leave the action gated for a human.
+    if proposal.get("action") == "restart_pod" and "restart_pod" in set(auto_actions):
+        pod = context.get("pod_status") or {}
+        try:
+            context["deployment_name"] = recovery_verifier.resolve_deployment_name(
+                incident["namespace"], pod["name"], pod.get("uid")
+            )
+        except (KeyError, ValueError, ApiException) as exc:
+            context["deployment_resolution_error"] = str(exc)
     orchestrator = RemediationOrchestrator(policy=policy, executor=executor)
     execution = orchestrator.run(proposal, context)
     if execution.get("decision") == "AUTO_APPROVE":
         memory.record_auto_attempt(incident["incident_id"])
     recovery = {"status": "NOT_ATTEMPTED", "reason": "No infrastructure action was authorized."}
     if execution.get("status") == "SUCCESS" and execution.get("execution_performed"):
-        old_uid = (context.get("pod_status") or {}).get("uid")
-        recovery = (verifier or DeploymentRecoveryVerifier()).verify(
-            incident["namespace"], incident["service"], old_uid)
+        deployment_name = context.get("deployment_name")
+        if not deployment_name:
+            recovery = {"status": "UNKNOWN",
+                        "reason": "Deployment ownership was not resolved before execution."}
+        else:
+            recovery = recovery_verifier.verify(
+                incident["namespace"], deployment_name,
+                (context.get("pod_status") or {}).get("uid")
+            )
         if recovery["status"] != "RECOVERED":
             execution["status"] = "FAILED"
             execution["escalation_required"] = True
