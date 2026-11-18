@@ -72,14 +72,15 @@ class DiagnosisValidator:
                 if not any(p.search(line) for p in self._GENERIC_LOG_PATTERNS)
                 and self._FAILURE_LOG_PATTERN.search(line)
             ]
-            if not meaningful_failure_logs and self._UNSUPPORTED_CAUSE_PATTERN.search(
-                diagnosis["root_cause"]
-            ):
-                diagnosis["root_cause"] = (
-                    "The container terminated unsuccessfully, but the exact "
-                    "application-level root cause cannot be determined from the supplied evidence."
-                )
-                diagnosis["confidence"] = min(float(confidence), 0.35)
+            if not meaningful_failure_logs:
+                # A model cannot claim a confident failure diagnosis when the
+                # supplied application logs contain no identifiable failure signal.
+                diagnosis["confidence"] = min(float(diagnosis["confidence"]), 0.35)
+                if self._UNSUPPORTED_CAUSE_PATTERN.search(diagnosis["root_cause"]):
+                    diagnosis["root_cause"] = (
+                        "The container terminated unsuccessfully, but the exact "
+                        "application-level root cause cannot be determined from the supplied evidence."
+                    )
                 diagnosis["recommended_action"] = (
                     "Collect and inspect application logs from the failing container, "
                     "including previous-container logs, and correlate them with Kubernetes termination details."
