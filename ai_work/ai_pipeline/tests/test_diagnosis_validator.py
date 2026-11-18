@@ -96,3 +96,18 @@ def test_structural_validation_rejects_non_string_evidence():
 
     with pytest.raises(ValueError, match="each evidence item must be a string"):
         DiagnosisValidator().validate(diagnosis, {"previous_logs": []})
+
+def test_underscored_controlled_crash_marker_counts_as_failure_evidence():
+    marker = "AUTOTOPS_V3_CONTROLLED_CRASH"
+    diagnosis = make_diagnosis(
+        root_cause="The controlled test command terminated the container.",
+        evidence=[marker],
+        confidence=0.95,
+    )
+    context = {"current_logs": [marker], "previous_logs": []}
+
+    result = DiagnosisValidator().validate(diagnosis, context)
+
+    assert result["confidence"] == 0.95
+    assert marker in result["evidence"]
+
