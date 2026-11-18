@@ -12,11 +12,7 @@ class PolicyDecision:
 
 
 class RemediationPolicy:
-    """Fail-closed policy with opt-in, bounded low-risk automation.
-
-    The initial auto-allowlist is intentionally empty. Operators must enable
-    individual actions explicitly; high-impact actions always require a human.
-    """
+    """Fail-closed policy with opt-in, bounded low-risk automation."""
     HIGH_IMPACT = {"rollback", "scale", "update_configuration", "redeploy"}
     SUPPORTED = {"restart_pod", "rollback", "scale", "investigate"}
 
@@ -36,13 +32,16 @@ class RemediationPolicy:
             return PolicyDecision("HUMAN_APPROVAL", "HIGH" if action in self.HIGH_IMPACT else "MEDIUM",
                                   "Action is not explicitly allowlisted for automation.", True)
         if action == "restart_pod":
-            pod = (context.get("pod_status") or {})
+            pod = context.get("pod_status") or {}
             if not pod.get("name") or not pod.get("uid"):
                 return PolicyDecision("HUMAN_APPROVAL", "MEDIUM",
                                       "Pod identity is missing; refusing automatic restart.", True)
-            if pod.get("owner_kind") not in {"ReplicaSet", "StatefulSet"}:
+            if pod.get("owner_kind") != "ReplicaSet":
                 return PolicyDecision("HUMAN_APPROVAL", "MEDIUM",
-                                      "Pod is not confirmed as controller-managed.", True)
+                                      "Pod is not confirmed as Deployment-managed.", True)
+            if not context.get("deployment_name"):
+                return PolicyDecision("HUMAN_APPROVAL", "MEDIUM",
+                                      "Owning Deployment could not be resolved; refusing automatic restart.", True)
             attempts = int(context.get("auto_remediation_attempts", 0) or 0)
             if attempts >= self.max_auto_attempts:
                 return PolicyDecision("ESCALATE", "MEDIUM",
