@@ -1,6 +1,6 @@
 """Least-privilege Kubernetes remediation adapter.
 
-Only fixed, allowlisted API operations are exposed. No shell or kubectl command
+Only fixed, allowlisted Kubernetes API operations are exposed. No shell or kubectl command
 is constructed from model output.
 """
 from typing import Any, Dict
@@ -28,10 +28,13 @@ class KubernetesRemediationExecutor:
             raise ValueError("Only restart_pod is supported by this executor.")
         if handoff.get("approved_by") != "policy:auto":
             raise ValueError("A policy authorization or explicit human approval is required.")
-        namespace, pod_name, expected_uid = (
-            handoff.get("namespace"), handoff.get("pod_name"), handoff.get("pod_uid"))
-        if not all(isinstance(x, str) and x.strip() for x in (namespace, pod_name, expected_uid)):
-            raise ValueError("Namespace, pod name, and expected UID are required.")
+        namespace, pod_name, expected_uid, deployment_name = (
+            handoff.get("namespace"), handoff.get("pod_name"),
+            handoff.get("pod_uid"), handoff.get("deployment_name")
+        )
+        if not all(isinstance(value, str) and value.strip()
+                   for value in (namespace, pod_name, expected_uid, deployment_name)):
+            raise ValueError("Namespace, pod, UID, and owning Deployment are required.")
         api = self._api()
         try:
             pod = api.read_namespaced_pod(pod_name, namespace)
@@ -39,8 +42,8 @@ class KubernetesRemediationExecutor:
                 return {"status": "FAILED", "execution_performed": False,
                         "reason": "Pod identity changed; refusing deletion."}
             owners = pod.metadata.owner_references or []
-            if not any(owner.kind in {"ReplicaSet", "StatefulSet"} for owner in owners):
-                raise ValueError("Refusing to restart an unmanaged pod.")
+            if not any(owner.kind == "ReplicaSet" and owner.controller for owner in owners):
+                raise ValueError("Refusing to restart a pod not controlled by a ReplicaSet.")
             api.delete_namespaced_pod(
                 pod_name, namespace,
                 body=client.V1DeleteOptions(grace_period_seconds=30),
@@ -48,8 +51,9 @@ class KubernetesRemediationExecutor:
             )
             return {"status": "SUCCESS", "execution_performed": True,
                     "action": "restart_pod", "target": pod_name,
-                    "namespace": namespace, "expected_pod_uid": expected_uid,
-                    "message": "Pod deletion requested; controller is expected to recreate it."}
+                    "namespace": namespace, "deployment_name": deployment_name,
+                    "expected_pod_uid": expected_uid,
+                    "message": "Pod deletion requested; owning Deployment is expected to recreate it."}
         except ApiException as exc:
             return {"status": "FAILED", "execution_performed": False,
                     "reason": f"Kubernetes API returned HTTP {exc.status}."}
