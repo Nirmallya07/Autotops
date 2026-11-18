@@ -33,14 +33,10 @@ class RemediationProposal:
 
         confidence = diagnosis.get("confidence", 0)
         diagnosis_evidence = diagnosis.get("evidence", [])
-        recommended = str(diagnosis.get("recommended_action", "")).lower()
         insufficient = (
             isinstance(confidence, bool) or not isinstance(confidence, (int, float))
             or confidence < self.MIN_REMEDIATION_CONFIDENCE
             or not diagnosis_evidence
-            or any(term in recommended for term in (
-                "investigate", "collect", "inspect", "unknown", "insufficient evidence"
-            ))
         )
 
         if insufficient:
