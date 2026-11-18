@@ -27,7 +27,7 @@ class RemediationOrchestrator:
             "risk": decision.risk, "approved_by": "policy:auto",
             "approval_required": False, "status": "READY_FOR_EXECUTION",
             "namespace": context.get("namespace"), "pod_name": pod.get("name"),
-            "pod_uid": pod.get("uid"),
+            "pod_uid": pod.get("uid"), "deployment_name": context.get("deployment_name"),
         }
         execution = self.executor.execute(handoff)
         result.update(execution)
