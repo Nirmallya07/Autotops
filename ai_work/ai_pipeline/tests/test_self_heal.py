@@ -22,6 +22,5 @@ def test_v3_defaults_to_no_execution_and_generates_report(tmp_path, monkeypatch)
     assert result["execution_performed"] is False
     assert result["proposal"]["action"] == "investigate"
     assert result["status"] == "NO_EXECUTION"
-    assert result["proposal"]["action"] == "restart_pod"
     assert (tmp_path/"reports"/"INC-V3-1.json").exists()
     assert (tmp_path/"reports"/"INC-V3-1.txt").exists()
